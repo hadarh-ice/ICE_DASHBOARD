@@ -28,6 +28,7 @@ export function useGlobalMetrics({ dateRange, employeeIds }: UseMetricsOptions) 
         employeeIds: employeeIds?.length ? employeeIds : undefined,
       }),
     staleTime: 60 * 1000, // 1 minute
+    enabled: typeof window !== 'undefined',
   });
 }
 
@@ -45,6 +46,7 @@ export function useEmployeeMetrics({ dateRange, employeeIds }: UseMetricsOptions
         employeeIds: employeeIds?.length ? employeeIds : undefined,
       }),
     staleTime: 60 * 1000, // 1 minute
+    enabled: typeof window !== 'undefined',
   });
 }
 
@@ -68,5 +70,6 @@ export function useTopArticles(
         limit
       ),
     staleTime: 60 * 1000, // 1 minute
+    enabled: typeof window !== 'undefined',
   });
 }

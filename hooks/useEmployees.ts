@@ -8,5 +8,6 @@ export function useEmployees() {
     queryKey: ['employees'],
     queryFn: getAllEmployees,
     staleTime: 5 * 60 * 1000, // 5 minutes
+    enabled: typeof window !== 'undefined',
   });
 }
