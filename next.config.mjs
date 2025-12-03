@@ -4,8 +4,6 @@ const nextConfig = {
     serverActions: {
       bodySizeLimit: '10mb',
     },
-    // Disable static optimization for client-only pages
-    isrMemoryCacheSize: 0,
   },
 };
 

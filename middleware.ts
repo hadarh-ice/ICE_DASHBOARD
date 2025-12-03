@@ -1,6 +1,9 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
+// Use Node.js runtime instead of Edge to support Supabase's Node.js APIs
+export const runtime = 'nodejs';
+
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
     request,
@@ -29,9 +32,8 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  // Don't check auth in middleware - let pages handle it
-  // This prevents middleware crashes and improves performance
-  // Auth will be checked client-side on each page
+  // Refresh session if expired - this triggers the setAll callback for cookie refresh
+  await supabase.auth.getUser();
 
   return supabaseResponse;
 }
