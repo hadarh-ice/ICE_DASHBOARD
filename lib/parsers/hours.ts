@@ -126,7 +126,7 @@ export async function parseHoursFile(file: File): Promise<ParseHoursResult> {
           continue;
         }
 
-        const hours = parseNumber(row[colIndices.hours]);
+        const hours = parseNumber(row[colIndices.hours] as string | number | null | undefined);
 
         rows.push({
           firstName,
