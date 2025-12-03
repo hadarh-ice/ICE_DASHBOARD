@@ -186,7 +186,7 @@ export async function getTopArticles(
     title: article.title,
     views: article.views,
     published_at: article.published_at,
-    employee_name: (article.employee as { canonical_name: string } | null)?.canonical_name || '-',
+    employee_name: (article.employee as unknown as { canonical_name: string } | null)?.canonical_name || '-',
   }));
 }
 
