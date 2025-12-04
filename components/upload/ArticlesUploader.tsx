@@ -8,7 +8,6 @@ import { Progress } from '@/components/ui/progress';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { parseArticlesFile } from '@/lib/parsers/articles';
-import { uploadArticlesData } from '@/lib/queries/upload';
 import { ParsedArticleRow, UpsertResult } from '@/types';
 import { toast } from 'sonner';
 import { FileText, Upload, CheckCircle, AlertCircle } from 'lucide-react';
@@ -51,17 +50,48 @@ export function ArticlesUploader() {
       toast.info('מעלה נתונים...');
       setUploadProgress(30);
 
-      const result = await uploadArticlesData(parsedData, file?.name || 'unknown');
+      // Call server-side API route (bypasses RLS)
+      const response = await fetch('/api/upload/articles', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          rows: parsedData,
+          fileName: file?.name || 'unknown',
+        }),
+      });
+
+      setUploadProgress(80);
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Upload failed');
+      }
+
+      const result: UpsertResult = await response.json();
 
       setUploadProgress(100);
       setUploadResult(result);
 
-      toast.success(
-        `הושלם! ${result.inserted} נוספו, ${result.updated} עודכנו`
-      );
+      if (result.errors && result.errors.length > 0) {
+        toast.warning(
+          `הושלם עם שגיאות: ${result.inserted} נוספו, ${result.updated} עודכנו, ${result.errors.length} שגיאות`
+        );
+      } else {
+        toast.success(
+          `הושלם! ${result.inserted} נוספו, ${result.updated} עודכנו`
+        );
+      }
     } catch (error) {
       toast.error('שגיאה בהעלאה');
-      console.error(error);
+      console.error('Upload error:', error);
+      setUploadResult({
+        inserted: 0,
+        updated: 0,
+        skipped: 0,
+        errors: [error instanceof Error ? error.message : 'Unknown error'],
+      });
     } finally {
       setIsUploading(false);
     }

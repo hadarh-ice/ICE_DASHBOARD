@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/client';
+import { SupabaseClient } from '@supabase/supabase-js';
 
 /**
  * Normalize a Hebrew name for matching
@@ -136,12 +137,17 @@ export async function findOrCreateEmployee(
 
 /**
  * Batch find or create employees (more efficient for large imports)
+ * @param names - Array of names to process
+ * @param source - Source of the data ('hours' or 'articles')
+ * @param supabaseClient - Optional Supabase client (defaults to browser client)
  */
 export async function batchFindOrCreateEmployees(
   names: Array<{ fullName: string; employeeNumber?: string }>,
-  source: 'hours' | 'articles'
+  source: 'hours' | 'articles',
+  supabaseClient?: SupabaseClient
 ): Promise<Map<string, string>> {
-  const supabase = createClient();
+  // Use provided client or create browser client (for backward compatibility)
+  const supabase = supabaseClient || createClient();
   const result = new Map<string, string>();
 
   // Get all existing aliases
