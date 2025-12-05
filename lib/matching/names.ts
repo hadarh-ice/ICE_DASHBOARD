@@ -182,13 +182,18 @@ export async function batchFindOrCreateEmployees(
 
       if (similarity(firstName, aliasFirstName) >= 0.85 &&
           similarity(normalized, aliasNorm) >= 0.75) {
-        // Add new alias
-        await supabase.from('employee_aliases').insert({
+        // Add new alias (ignore errors from duplicate aliases)
+        const { error: aliasError } = await supabase.from('employee_aliases').insert({
           employee_id: employeeId,
           alias: fullName,
           normalized_alias: normalized,
           source,
         });
+
+        if (aliasError && !aliasError.message.includes('duplicate')) {
+          console.error(`[name-matching] Failed to add alias for ${fullName}: ${aliasError.message}`);
+        }
+
         aliasMap.set(normalized, employeeId);
         result.set(fullName, employeeId);
         foundMatch = true;
@@ -202,7 +207,7 @@ export async function batchFindOrCreateEmployees(
       const firstName_ = nameParts[0] || '';
       const lastName = nameParts.slice(1).join(' ') || '';
 
-      const { data: newEmployee } = await supabase
+      const { data: newEmployee, error: empError } = await supabase
         .from('employees')
         .insert({
           canonical_name: fullName.trim(),
@@ -213,13 +218,37 @@ export async function batchFindOrCreateEmployees(
         .select('id')
         .single();
 
-      if (newEmployee) {
-        await supabase.from('employee_aliases').insert({
+      if (empError) {
+        // Handle duplicate canonical_name - try to find existing
+        if (empError.message.includes('duplicate')) {
+          const { data: existingEmp } = await supabase
+            .from('employees')
+            .select('id')
+            .eq('canonical_name', fullName.trim())
+            .single();
+
+          if (existingEmp) {
+            aliasMap.set(normalized, existingEmp.id);
+            result.set(fullName, existingEmp.id);
+          } else {
+            console.error(`[name-matching] Failed to create or find employee: ${fullName}`);
+          }
+        } else {
+          console.error(`[name-matching] Failed to create employee ${fullName}: ${empError.message}`);
+        }
+      } else if (newEmployee) {
+        // Add alias for the new employee (ignore duplicate errors)
+        const { error: aliasError } = await supabase.from('employee_aliases').insert({
           employee_id: newEmployee.id,
           alias: fullName,
           normalized_alias: normalized,
           source,
         });
+
+        if (aliasError && !aliasError.message.includes('duplicate')) {
+          console.error(`[name-matching] Failed to add alias for new employee ${fullName}: ${aliasError.message}`);
+        }
+
         aliasMap.set(normalized, newEmployee.id);
         result.set(fullName, newEmployee.id);
       }

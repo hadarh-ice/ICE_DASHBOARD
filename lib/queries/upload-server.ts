@@ -32,9 +32,9 @@ function extractStatusFromTime(entryTime: string | undefined, exitTime: string |
 }
 
 /**
- * Server-side upload hours data with deduplication
+ * Server-side upload hours data with UPSERT
  * Uses admin client that bypasses RLS
- * Rule: Keep row with higher hours for same (employee, date)
+ * Always updates existing records (replaces old row-by-row deduplication)
  */
 export async function uploadHoursDataServer(
   supabase: SupabaseClient,
@@ -51,7 +51,7 @@ export async function uploadHoursDataServer(
   try {
     console.log(`[upload-server] Starting upload of ${rows.length} rows from ${fileName}`);
 
-    // Batch find/create employees using admin client
+    // 1. Batch find/create employees using admin client
     const uniqueNames = [...new Set(rows.map(r => r.fullName))].map(name => ({
       fullName: name,
       employeeNumber: rows.find(r => r.fullName === name)?.employeeNumber,
@@ -63,84 +63,102 @@ export async function uploadHoursDataServer(
 
     console.log(`[upload-server] Employee map created with ${employeeMap.size} entries`);
 
-    // Process rows in batches
-    const BATCH_SIZE = 100;
+    // 2. Prepare records for upsert, filtering out rows without employee mapping
+    const records: Array<{
+      employee_id: string;
+      date: string;
+      hours: number;
+      status: string | null;
+      entry_time: string | null;
+      exit_time: string | null;
+      updated_at: string;
+    }> = [];
 
-    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-      const batch = rows.slice(i, i + BATCH_SIZE);
-      console.log(`[upload-server] Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(rows.length / BATCH_SIZE)}`);
+    for (const row of rows) {
+      const employeeId = employeeMap.get(row.fullName);
 
-      for (const row of batch) {
-        const employeeId = employeeMap.get(row.fullName);
+      if (!employeeId) {
+        const errorMsg = `Failed to find/create employee: ${row.fullName}`;
+        console.error(`[upload-server] ${errorMsg}`);
+        result.errors.push(errorMsg);
+        continue;
+      }
 
-        if (!employeeId) {
-          const errorMsg = `Failed to find/create employee: ${row.fullName}`;
-          console.error(`[upload-server] ${errorMsg}`);
-          result.errors.push(errorMsg);
-          continue;
+      // Extract status from entry/exit time if they contain status text
+      const status = extractStatusFromTime(row.entryTime, row.exitTime, row.status);
+      const entryTime = isValidTimeFormat(row.entryTime) ? row.entryTime! : null;
+      const exitTime = isValidTimeFormat(row.exitTime) ? row.exitTime! : null;
+
+      records.push({
+        employee_id: employeeId,
+        date: row.date,
+        hours: row.hours,
+        status: status ?? null,
+        entry_time: entryTime,
+        exit_time: exitTime,
+        updated_at: new Date().toISOString(),
+      });
+    }
+
+    console.log(`[upload-server] Prepared ${records.length} records for upsert`);
+
+    // 3. Get existing records to accurately count inserts vs updates
+    const existingMap = new Map<string, boolean>();
+    const FETCH_CHUNK_SIZE = 1000;
+
+    // Get unique employee IDs and dates from our records
+    const employeeIds = [...new Set(records.map(r => r.employee_id))];
+
+    for (let i = 0; i < employeeIds.length; i += FETCH_CHUNK_SIZE) {
+      const employeeChunk = employeeIds.slice(i, i + FETCH_CHUNK_SIZE);
+
+      const { data: existingRecords, error: fetchError } = await supabase
+        .from('daily_hours')
+        .select('employee_id, date')
+        .in('employee_id', employeeChunk);
+
+      if (fetchError) {
+        console.error(`[upload-server] Failed to fetch existing records: ${fetchError.message}`);
+      } else {
+        for (const record of existingRecords || []) {
+          const key = `${record.employee_id}:${record.date}`;
+          existingMap.set(key, true);
         }
+      }
+    }
 
-        // Check existing record
-        const { data: existing, error: selectError } = await supabase
-          .from('daily_hours')
-          .select('id, hours')
-          .eq('employee_id', employeeId)
-          .eq('date', row.date)
-          .maybeSingle();
+    console.log(`[upload-server] Found ${existingMap.size} existing records in database`);
 
-        if (selectError) {
-          const errorMsg = `Select failed for ${row.fullName} on ${row.date}: ${selectError.message}`;
-          console.error(`[upload-server] ${errorMsg}`);
-          result.errors.push(errorMsg);
-          continue;
-        }
+    // 4. Batch upsert records
+    const BATCH_SIZE = 500;
 
-        // Extract status from entry/exit time if they contain status text
-        const status = extractStatusFromTime(row.entryTime, row.exitTime, row.status);
-        const entryTime = isValidTimeFormat(row.entryTime) ? row.entryTime : null;
-        const exitTime = isValidTimeFormat(row.exitTime) ? row.exitTime : null;
+    for (let i = 0; i < records.length; i += BATCH_SIZE) {
+      const batch = records.slice(i, i + BATCH_SIZE);
+      const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(records.length / BATCH_SIZE);
 
-        if (existing) {
-          // Update only if new hours > existing hours
-          if (row.hours > Number(existing.hours)) {
-            const { error } = await supabase
-              .from('daily_hours')
-              .update({
-                hours: row.hours,
-                status: status,
-                entry_time: entryTime,
-                exit_time: exitTime,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', existing.id);
+      console.log(`[upload-server] Upserting batch ${batchNum}/${totalBatches} (${batch.length} records)`);
 
-            if (error) {
-              const errorMsg = `Update failed for ${row.fullName} on ${row.date}: ${error.message}`;
-              console.error(`[upload-server] ${errorMsg}`);
-              result.errors.push(errorMsg);
-            } else {
-              result.updated++;
-            }
-          } else {
-            result.skipped++;
-          }
-        } else {
-          // Insert new record
-          const { error } = await supabase.from('daily_hours').insert({
-            employee_id: employeeId,
-            date: row.date,
-            hours: row.hours,
-            status: status,
-            entry_time: entryTime,
-            exit_time: exitTime,
-          });
+      const { error } = await supabase
+        .from('daily_hours')
+        .upsert(batch, {
+          onConflict: 'employee_id,date',
+          ignoreDuplicates: false,
+        });
 
-          if (error) {
-            const errorMsg = `Insert failed for ${row.fullName} on ${row.date}: ${error.message}`;
-            console.error(`[upload-server] ${errorMsg}`);
-            result.errors.push(errorMsg);
+      if (error) {
+        const errorMsg = `Batch ${batchNum} upsert failed: ${error.message}`;
+        console.error(`[upload-server] ${errorMsg}`);
+        result.errors.push(errorMsg);
+      } else {
+        // Count inserts vs updates
+        for (const record of batch) {
+          const key = `${record.employee_id}:${record.date}`;
+          if (existingMap.has(key)) {
+            result.updated++;
           } else {
             result.inserted++;
+            existingMap.set(key, true); // Mark as existing for dedup within this upload
           }
         }
       }
@@ -148,7 +166,7 @@ export async function uploadHoursDataServer(
 
     console.log(`[upload-server] Upload complete: ${result.inserted} inserted, ${result.updated} updated, ${result.skipped} skipped, ${result.errors.length} errors`);
 
-    // Log import
+    // 5. Log import
     const { error: logError } = await supabase.from('import_logs').insert({
       file_type: 'hours',
       file_name: fileName,

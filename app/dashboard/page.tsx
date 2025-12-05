@@ -1,5 +1,8 @@
 'use client';
 
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
 import { Header } from '@/components/layout/Header';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { FilterBar } from '@/components/filters/FilterBar';
@@ -13,8 +16,13 @@ import {
   useEmployeeMetrics,
   useTopArticles,
 } from '@/hooks/useMetrics';
+import { Loader2 } from 'lucide-react';
 
 export default function DashboardPage() {
+  const router = useRouter();
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Call all hooks at the top level (before any conditional returns)
   const {
     dateRange,
     selectedEmployees,
@@ -36,6 +44,29 @@ export default function DashboardPage() {
     useEmployeeMetrics(filterOptions);
   const { data: topArticles = [], isLoading: isLoadingArticles } =
     useTopArticles(filterOptions, 20);
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+
+      if (!user) {
+        router.push('/login');
+      } else {
+        setIsLoading(false);
+      }
+    };
+
+    checkAuth();
+  }, [router]);
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen">

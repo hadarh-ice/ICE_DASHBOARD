@@ -154,16 +154,48 @@ export function HoursUploader() {
           )}
 
           {uploadResult && (
-            <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-              <div className="flex items-center gap-2 font-medium text-green-800 mb-2">
-                <CheckCircle className="h-4 w-4" />
-                העלאה הושלמה!
+            <div className={`p-4 border rounded-lg ${
+              uploadResult.errors && uploadResult.errors.length > 0
+                ? 'bg-yellow-50 border-yellow-200'
+                : 'bg-green-50 border-green-200'
+            }`}>
+              <div className={`flex items-center gap-2 font-medium mb-2 ${
+                uploadResult.errors && uploadResult.errors.length > 0
+                  ? 'text-yellow-800'
+                  : 'text-green-800'
+              }`}>
+                {uploadResult.errors && uploadResult.errors.length > 0 ? (
+                  <AlertCircle className="h-4 w-4" />
+                ) : (
+                  <CheckCircle className="h-4 w-4" />
+                )}
+                העלאה הושלמה{uploadResult.errors && uploadResult.errors.length > 0 ? ' עם אזהרות' : '!'}
               </div>
-              <div className="flex gap-4 text-sm">
+              <div className="flex flex-wrap gap-2 text-sm mb-2">
                 <Badge variant="default">{uploadResult.inserted} נוספו</Badge>
                 <Badge variant="secondary">{uploadResult.updated} עודכנו</Badge>
-                <Badge variant="outline">{uploadResult.skipped} דולגו</Badge>
+                {uploadResult.skipped > 0 && (
+                  <Badge variant="outline">{uploadResult.skipped} דולגו</Badge>
+                )}
+                {uploadResult.errors && uploadResult.errors.length > 0 && (
+                  <Badge variant="destructive">{uploadResult.errors.length} שגיאות</Badge>
+                )}
               </div>
+              {uploadResult.errors && uploadResult.errors.length > 0 && (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-sm text-yellow-700 hover:text-yellow-800">
+                    הצג {uploadResult.errors.length} שגיאות
+                  </summary>
+                  <ul className="mt-2 text-sm text-yellow-700 list-disc list-inside max-h-40 overflow-y-auto bg-yellow-100 p-2 rounded">
+                    {uploadResult.errors.slice(0, 50).map((error, i) => (
+                      <li key={i} className="truncate" title={error}>{error}</li>
+                    ))}
+                    {uploadResult.errors.length > 50 && (
+                      <li className="font-medium">...ועוד {uploadResult.errors.length - 50} שגיאות</li>
+                    )}
+                  </ul>
+                </details>
+              )}
             </div>
           )}
 
