@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { LayoutDashboard, Upload, Users, FileBarChart, ChevronLeft } from 'lucide-react';
+import { LayoutDashboard, Upload, Users, FileBarChart, Settings, ChevronLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const navItems = [
@@ -30,6 +30,12 @@ const navItems = [
     href: '/reports',
     icon: FileBarChart,
     description: 'ייצוא נתונים',
+  },
+  {
+    title: 'הגדרות',
+    href: '/settings',
+    icon: Settings,
+    description: 'ניהול הגדרות המערכת',
   },
 ];
 

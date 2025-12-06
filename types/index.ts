@@ -277,3 +277,27 @@ export interface DetailedUpsertResult extends UpsertResult {
   };
   processingTimeMs: number;
 }
+
+// ============================================================================
+// DELETE DATA TYPES
+// ============================================================================
+
+/**
+ * Delete data request payload
+ */
+export interface DeleteDataRequest {
+  type: 'hours' | 'articles' | 'both';
+  startDate: string; // YYYY-MM-DD
+  endDate: string;   // YYYY-MM-DD
+}
+
+/**
+ * Delete data operation result
+ */
+export interface DeleteDataResult {
+  success: boolean;
+  deletedHours: number;
+  deletedArticles: number;
+  errors: string[];
+  processingTimeMs: number;
+}
