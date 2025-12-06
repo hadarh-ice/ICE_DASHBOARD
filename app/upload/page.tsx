@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { motion } from 'framer-motion';
 import { createClient } from '@/lib/supabase/client';
-import { Header } from '@/components/layout/Header';
-import { Sidebar } from '@/components/layout/Sidebar';
+import { AppShell } from '@/components/layout/AppShell';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { HoursUploader } from '@/components/upload/HoursUploader';
 import { ArticlesUploader } from '@/components/upload/ArticlesUploader';
 import { Clock, FileText, Loader2 } from 'lucide-react';
+import { listContainerVariants, listItemVariants } from '@/lib/animations';
 
 export default function UploadPage() {
   const router = useRouter();
@@ -31,44 +32,76 @@ export default function UploadPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.3 }}
+        >
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </motion.div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen">
-      <Header />
-      <Sidebar />
-      <main className="pr-56 pt-14">
-        <div className="container py-6 space-y-6">
-          <div className="flex items-center justify-between">
-            <h1 className="text-3xl font-bold">העלאת קבצים</h1>
-          </div>
+    <AppShell>
+      <motion.div
+        variants={listContainerVariants}
+        initial="hidden"
+        animate="visible"
+        className="space-y-6"
+      >
+        {/* Page Header */}
+        <motion.div variants={listItemVariants}>
+          <h1 className="text-2xl md:text-3xl font-bold">העלאת קבצים</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            העלה קבצי שעות עבודה וכתבות
+          </p>
+        </motion.div>
 
+        {/* Tabs */}
+        <motion.div variants={listItemVariants}>
           <Tabs defaultValue="hours" className="w-full">
-            <TabsList className="grid w-full max-w-md grid-cols-2">
-              <TabsTrigger value="hours" className="flex items-center gap-2">
+            <TabsList className="grid w-full max-w-md grid-cols-2 h-12">
+              <TabsTrigger
+                value="hours"
+                className="flex items-center gap-2 h-10 text-sm"
+              >
                 <Clock className="h-4 w-4" />
-                שעות עבודה
+                <span>שעות עבודה</span>
               </TabsTrigger>
-              <TabsTrigger value="articles" className="flex items-center gap-2">
+              <TabsTrigger
+                value="articles"
+                className="flex items-center gap-2 h-10 text-sm"
+              >
                 <FileText className="h-4 w-4" />
-                כתבות
+                <span>כתבות</span>
               </TabsTrigger>
             </TabsList>
 
             <TabsContent value="hours" className="mt-6">
-              <HoursUploader />
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2 }}
+              >
+                <HoursUploader />
+              </motion.div>
             </TabsContent>
 
             <TabsContent value="articles" className="mt-6">
-              <ArticlesUploader />
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2 }}
+              >
+                <ArticlesUploader />
+              </motion.div>
             </TabsContent>
           </Tabs>
-        </div>
-      </main>
-    </div>
+        </motion.div>
+      </motion.div>
+    </AppShell>
   );
 }

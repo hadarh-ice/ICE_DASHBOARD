@@ -61,6 +61,27 @@
 /* RTL Support */
 html {
   direction: rtl;
+  scroll-behavior: smooth;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Prevent overscroll bounce on iOS */
+html, body {
+  overscroll-behavior: none;
+}
+
+/* Safe area support for iPhone notch/home indicator */
+body {
+  padding-top: env(safe-area-inset-top);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* Mobile viewport height fix (accounts for mobile browser chrome) */
+@supports (height: 100dvh) {
+  :root {
+    --vh: 1dvh;
+  }
 }
 
 /* Custom scrollbar */
@@ -81,4 +102,70 @@ html {
 
 ::-webkit-scrollbar-thumb:hover {
   background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* Hide scrollbar on mobile for cleaner look */
+@media (max-width: 767px) {
+  ::-webkit-scrollbar {
+    display: none;
+  }
+
+  * {
+    scrollbar-width: none;
+  }
+}
+
+/* Glass morphism utilities */
+@layer utilities {
+  .glass {
+    background: hsl(var(--background) / 0.8);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  .glass-strong {
+    background: hsl(var(--background) / 0.95);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  .glass-card {
+    background: hsl(var(--card) / 0.7);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+}
+
+/* Touch-friendly focus states */
+@layer base {
+  button, a, [role="button"] {
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+  }
+
+  /* Larger tap targets on mobile */
+  @media (max-width: 767px) {
+    button:not(.btn-sm),
+    [role="button"]:not(.btn-sm) {
+      min-height: 44px;
+    }
+  }
+}
+
+/* Bottom navigation safe area */
+.pb-safe {
+  padding-bottom: calc(64px + env(safe-area-inset-bottom));
+}
+
+/* Content area that accounts for bottom nav on mobile */
+.content-area {
+  min-height: calc(100vh - 56px);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@media (max-width: 767px) {
+  .content-area {
+    min-height: calc(100dvh - 56px - 64px - env(safe-area-inset-bottom));
+    padding-bottom: calc(64px + env(safe-area-inset-bottom) + 16px);
+  }
 }

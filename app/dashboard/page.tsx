@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { motion } from 'framer-motion';
 import { createClient } from '@/lib/supabase/client';
-import { Header } from '@/components/layout/Header';
-import { Sidebar } from '@/components/layout/Sidebar';
+import { AppShell } from '@/components/layout/AppShell';
 import { FilterBar } from '@/components/filters/FilterBar';
 import { KPIGrid } from '@/components/dashboard/KPIGrid';
 import { TopArticlesTable } from '@/components/dashboard/TopArticlesTable';
@@ -16,13 +16,15 @@ import {
   useEmployeeMetrics,
   useTopArticles,
 } from '@/hooks/useMetrics';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Filter } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { listContainerVariants, listItemVariants } from '@/lib/animations';
 
 export default function DashboardPage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
+  const [showFilters, setShowFilters] = useState(false);
 
-  // Call all hooks at the top level (before any conditional returns)
   const {
     dateRange,
     selectedEmployees,
@@ -62,22 +64,55 @@ export default function DashboardPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.3 }}
+        >
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </motion.div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen">
-      <Header />
-      <Sidebar />
-      <main className="pr-56 pt-14">
-        <div className="container py-6 space-y-6">
-          <div className="flex items-center justify-between">
-            <h1 className="text-3xl font-bold">לוח בקרה</h1>
+    <AppShell>
+      <motion.div
+        variants={listContainerVariants}
+        initial="hidden"
+        animate="visible"
+        className="space-y-6"
+      >
+        {/* Page Header */}
+        <motion.div
+          variants={listItemVariants}
+          className="flex items-center justify-between"
+        >
+          <div>
+            <h1 className="text-2xl md:text-3xl font-bold">לוח בקרה</h1>
+            <p className="text-sm text-muted-foreground mt-1 hidden md:block">
+              סקירה כללית של ביצועי הצוות
+            </p>
           </div>
 
+          {/* Mobile filter toggle */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="md:hidden"
+            onClick={() => setShowFilters(!showFilters)}
+          >
+            <Filter className="h-4 w-4 ml-2" />
+            סינון
+          </Button>
+        </motion.div>
+
+        {/* Filters - always visible on desktop, toggle on mobile */}
+        <motion.div
+          variants={listItemVariants}
+          className={`${showFilters ? 'block' : 'hidden'} md:block`}
+        >
           <FilterBar
             employees={employees}
             dateRange={dateRange}
@@ -86,23 +121,30 @@ export default function DashboardPage() {
             onEmployeesChange={setSelectedEmployees}
             onReset={clearFilters}
           />
+        </motion.div>
 
+        {/* KPI Grid */}
+        <motion.div variants={listItemVariants}>
           <KPIGrid metrics={globalMetrics ?? null} isLoading={isLoadingGlobal} />
+        </motion.div>
 
-          <div className="grid gap-6 lg:grid-cols-2">
-            <TopArticlesTable
-              articles={topArticles}
-              isLoading={isLoadingArticles}
+        {/* Tables Section */}
+        <motion.div
+          variants={listItemVariants}
+          className="grid gap-6 lg:grid-cols-2"
+        >
+          <TopArticlesTable
+            articles={topArticles}
+            isLoading={isLoadingArticles}
+          />
+          <div className="lg:col-span-2">
+            <EmployeeRankingsTable
+              metrics={employeeMetrics}
+              isLoading={isLoadingEmployee}
             />
-            <div className="lg:col-span-2">
-              <EmployeeRankingsTable
-                metrics={employeeMetrics}
-                isLoading={isLoadingEmployee}
-              />
-            </div>
           </div>
-        </div>
-      </main>
-    </div>
+        </motion.div>
+      </motion.div>
+    </AppShell>
   );
 }
