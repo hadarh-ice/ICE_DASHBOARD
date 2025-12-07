@@ -1,7 +1,6 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Card, CardContent } from '@/components/ui/card';
 import { LucideIcon } from 'lucide-react';
 import { formatNumber, formatDecimal } from '@/lib/utils/numbers';
 import { cn } from '@/lib/utils';
@@ -13,28 +12,33 @@ interface KPICardProps {
   format?: 'number' | 'decimal' | 'rate';
   suffix?: string;
   color?: 'blue' | 'green' | 'purple' | 'orange';
+  isLoading?: boolean;
 }
 
 const colorMap = {
   blue: {
-    bg: 'bg-blue-500/10',
-    icon: 'text-blue-600',
-    gradient: 'from-blue-50 to-blue-100/50 dark:from-blue-950/20 dark:to-blue-900/10',
+    bg: 'bg-[#E8F0FE]',
+    iconBg: 'bg-[#D2E3FC]',
+    icon: 'text-[#1A73E8]',
+    gradient: 'from-[#E8F0FE] to-[#F1F6FE]',
   },
   green: {
-    bg: 'bg-green-500/10',
-    icon: 'text-green-600',
-    gradient: 'from-green-50 to-green-100/50 dark:from-green-950/20 dark:to-green-900/10',
+    bg: 'bg-[#E6F7ED]',
+    iconBg: 'bg-[#CEEAD6]',
+    icon: 'text-[#1E8E3E]',
+    gradient: 'from-[#E6F7ED] to-[#F0FAF4]',
   },
   purple: {
-    bg: 'bg-purple-500/10',
-    icon: 'text-purple-600',
-    gradient: 'from-purple-50 to-purple-100/50 dark:from-purple-950/20 dark:to-purple-900/10',
+    bg: 'bg-[#F3E8FF]',
+    iconBg: 'bg-[#E9D5FF]',
+    icon: 'text-[#9333EA]',
+    gradient: 'from-[#F3E8FF] to-[#FAF5FF]',
   },
   orange: {
-    bg: 'bg-orange-500/10',
-    icon: 'text-orange-600',
-    gradient: 'from-orange-50 to-orange-100/50 dark:from-orange-950/20 dark:to-orange-900/10',
+    bg: 'bg-[#FEF3E2]',
+    iconBg: 'bg-[#FDE7C7]',
+    icon: 'text-[#E07800]',
+    gradient: 'from-[#FEF3E2] to-[#FFFBF5]',
   },
 };
 
@@ -45,6 +49,7 @@ export function KPICard({
   format = 'number',
   suffix,
   color = 'blue',
+  isLoading = false,
 }: KPICardProps) {
   const displayValue =
     value === null
@@ -59,39 +64,62 @@ export function KPICard({
     <motion.div
       whileHover={{ scale: 1.02 }}
       whileTap={{ scale: 0.98 }}
-      transition={{ duration: 0.15 }}
+      transition={{
+        type: 'spring',
+        stiffness: 400,
+        damping: 25
+      }}
+      className="h-full"
     >
-      <Card className={cn(
-        'border-0 shadow-sm overflow-hidden cursor-pointer',
-        'bg-gradient-to-br',
-        colors.gradient
-      )}>
-        <CardContent className="p-4 md:p-5">
+      <div
+        className={cn(
+          'relative h-full',
+          'rounded-[14px]',
+          'bg-gradient-to-br',
+          colors.gradient,
+          'shadow-[0_2px_8px_rgba(0,0,0,0.08)]',
+          'overflow-hidden',
+          'cursor-pointer'
+        )}
+      >
+        <div className="p-4">
           <div className="flex items-start justify-between gap-3">
-            <div className="flex-1 min-w-0">
-              <p className="text-xs md:text-sm text-muted-foreground font-medium truncate">
+            {/* Icon */}
+            <div
+              className={cn(
+                'flex items-center justify-center',
+                'w-11 h-11 rounded-full shrink-0',
+                colors.iconBg
+              )}
+            >
+              <Icon className={cn('h-5 w-5', colors.icon)} />
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 min-w-0 text-left">
+              <p className="text-[13px] text-gray-500 dark:text-gray-400 font-medium truncate">
                 {title}
               </p>
-              <div className="mt-2 flex items-baseline gap-1">
-                <span className="text-xl md:text-2xl font-bold tracking-tight">
-                  {displayValue}
-                </span>
-                {suffix && value !== null && (
-                  <span className="text-[10px] md:text-xs font-medium text-muted-foreground">
-                    {suffix}
-                  </span>
+              <div className="mt-1.5 flex items-baseline gap-1">
+                {isLoading ? (
+                  <div className="h-7 w-20 bg-gray-200/50 rounded-lg animate-pulse" />
+                ) : (
+                  <>
+                    <span className="text-[22px] font-bold text-gray-900 dark:text-white tracking-tight">
+                      {displayValue}
+                    </span>
+                    {suffix && value !== null && (
+                      <span className="text-[11px] font-medium text-gray-400">
+                        {suffix}
+                      </span>
+                    )}
+                  </>
                 )}
               </div>
             </div>
-            <div className={cn(
-              'flex items-center justify-center w-10 h-10 md:w-11 md:h-11 rounded-xl shrink-0',
-              colors.bg
-            )}>
-              <Icon className={cn('h-5 w-5 md:h-5 md:w-5', colors.icon)} />
-            </div>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </motion.div>
   );
 }

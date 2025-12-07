@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { createClient } from '@/lib/supabase/client';
 import { AppShell } from '@/components/layout/AppShell';
-import { FilterBar } from '@/components/filters/FilterBar';
+import { Navbar } from '@/components/layout/Navbar';
+import { FilterSheet, FilterTrigger } from '@/components/filters/FilterSheet';
 import { KPIGrid } from '@/components/dashboard/KPIGrid';
 import { TopArticlesTable } from '@/components/dashboard/TopArticlesTable';
 import { EmployeeRankingsTable } from '@/components/dashboard/EmployeeRankingsTable';
@@ -16,14 +17,13 @@ import {
   useEmployeeMetrics,
   useTopArticles,
 } from '@/hooks/useMetrics';
-import { Loader2, Filter } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Loader2 } from 'lucide-react';
 import { listContainerVariants, listItemVariants } from '@/lib/animations';
 
 export default function DashboardPage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
-  const [showFilters, setShowFilters] = useState(false);
+  const [showFilterSheet, setShowFilterSheet] = useState(false);
 
   const {
     dateRange,
@@ -76,50 +76,39 @@ export default function DashboardPage() {
     );
   }
 
+  const hasActiveFilters = !!dateRange?.from || selectedEmployees.length > 0;
+
   return (
     <AppShell>
+      {/* iOS-style Navbar - Mobile Only */}
+      <Navbar title="לוח בקרה" />
+
       <motion.div
         variants={listContainerVariants}
         initial="hidden"
         animate="visible"
-        className="space-y-6"
+        className="space-y-5"
       >
-        {/* Page Header */}
+        {/* Page Header - Desktop Only */}
         <motion.div
           variants={listItemVariants}
-          className="flex items-center justify-between"
+          className="hidden md:flex items-center justify-between"
         >
           <div>
             <h1 className="text-2xl md:text-3xl font-bold">לוח בקרה</h1>
-            <p className="text-sm text-muted-foreground mt-1 hidden md:block">
+            <p className="text-sm text-muted-foreground mt-1">
               סקירה כללית של ביצועי הצוות
             </p>
           </div>
-
-          {/* Mobile filter toggle */}
-          <Button
-            variant="outline"
-            size="sm"
-            className="md:hidden"
-            onClick={() => setShowFilters(!showFilters)}
-          >
-            <Filter className="h-4 w-4 ml-2" />
-            סינון
-          </Button>
         </motion.div>
 
-        {/* Filters - always visible on desktop, toggle on mobile */}
-        <motion.div
-          variants={listItemVariants}
-          className={`${showFilters ? 'block' : 'hidden'} md:block`}
-        >
-          <FilterBar
-            employees={employees}
+        {/* Filter Trigger - Mobile */}
+        <motion.div variants={listItemVariants} className="md:hidden">
+          <FilterTrigger
+            onClick={() => setShowFilterSheet(true)}
+            hasActiveFilters={hasActiveFilters}
             dateRange={dateRange}
-            selectedEmployees={selectedEmployees}
-            onDateRangeChange={setDateRange}
-            onEmployeesChange={setSelectedEmployees}
-            onReset={clearFilters}
+            employeeCount={selectedEmployees.length}
           />
         </motion.div>
 
@@ -128,23 +117,37 @@ export default function DashboardPage() {
           <KPIGrid metrics={globalMetrics ?? null} isLoading={isLoadingGlobal} />
         </motion.div>
 
-        {/* Tables Section */}
-        <motion.div
-          variants={listItemVariants}
-          className="grid gap-6 lg:grid-cols-2"
-        >
+        {/* Top Articles */}
+        <motion.div variants={listItemVariants}>
           <TopArticlesTable
             articles={topArticles}
             isLoading={isLoadingArticles}
           />
-          <div className="lg:col-span-2">
-            <EmployeeRankingsTable
-              metrics={employeeMetrics}
-              isLoading={isLoadingEmployee}
-            />
-          </div>
+        </motion.div>
+
+        {/* Employee Rankings - Desktop Only */}
+        <motion.div
+          variants={listItemVariants}
+          className="hidden lg:block"
+        >
+          <EmployeeRankingsTable
+            metrics={employeeMetrics}
+            isLoading={isLoadingEmployee}
+          />
         </motion.div>
       </motion.div>
+
+      {/* Filter Sheet Modal */}
+      <FilterSheet
+        isOpen={showFilterSheet}
+        onClose={() => setShowFilterSheet(false)}
+        employees={employees}
+        dateRange={dateRange}
+        selectedEmployees={selectedEmployees}
+        onDateRangeChange={setDateRange}
+        onEmployeesChange={setSelectedEmployees}
+        onReset={clearFilters}
+      />
     </AppShell>
   );
 }
