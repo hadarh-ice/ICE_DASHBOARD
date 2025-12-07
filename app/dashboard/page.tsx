@@ -10,6 +10,7 @@ import { FilterSheet, FilterTrigger } from '@/components/filters/FilterSheet';
 import { KPIGrid } from '@/components/dashboard/KPIGrid';
 import { TopArticlesTable } from '@/components/dashboard/TopArticlesTable';
 import { EmployeeRankingsTable } from '@/components/dashboard/EmployeeRankingsTable';
+import { EmployeeRankingCards } from '@/components/dashboard/EmployeeRankingCards';
 import { useFilterStore } from '@/stores/filters';
 import { useEmployees } from '@/hooks/useEmployees';
 import {
@@ -115,6 +116,14 @@ export default function DashboardPage() {
         {/* KPI Grid */}
         <motion.div variants={listItemVariants}>
           <KPIGrid metrics={globalMetrics ?? null} isLoading={isLoadingGlobal} />
+        </motion.div>
+
+        {/* Employee Rankings - Mobile Only */}
+        <motion.div variants={listItemVariants} className="lg:hidden">
+          <EmployeeRankingCards
+            metrics={employeeMetrics}
+            isLoading={isLoadingEmployee}
+          />
         </motion.div>
 
         {/* Top Articles */}
