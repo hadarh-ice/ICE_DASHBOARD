@@ -436,3 +436,336 @@ export function getMatchStats(
 
   return { matched, unmatched, matchRate };
 }
+
+// ============================================================================
+// NAME RESOLUTION - Analysis and Manual Confirmation
+// ============================================================================
+
+import {
+  NameAnalysisResult,
+  AutoMatchedName,
+  NameConflict,
+  NameCandidate,
+  NameResolution,
+} from '@/types';
+import { NAME_MATCHING_CONFIG } from '@/lib/config/matching-thresholds';
+
+/**
+ * Find candidate employees with similarity scores
+ * Helper function for analyzeNamesForResolution
+ *
+ * @param normalized - Normalized name to match
+ * @param allAliases - All existing employee aliases
+ * @returns Sorted array of candidates (highest similarity first)
+ */
+function findCandidatesWithScores(
+  normalized: string,
+  allAliases: Array<{
+    employeeId: string;
+    normalized: string;
+    canonical: string;
+    confirmedByUser: boolean;
+  }>
+): NameCandidate[] {
+  const firstName = normalized.split(' ')[0];
+  const candidates: NameCandidate[] = [];
+
+  for (const alias of allAliases) {
+    const aliasFirstName = alias.normalized.split(' ')[0];
+
+    // First name must match closely (use config threshold)
+    const firstNameSim = similarity(firstName, aliasFirstName);
+    if (firstNameSim < NAME_MATCHING_CONFIG.FIRST_NAME_THRESHOLD) continue;
+
+    // Calculate full name similarity
+    const fullNameSim = similarity(normalized, alias.normalized);
+
+    // Only include candidates above manual resolution threshold
+    if (fullNameSim >= NAME_MATCHING_CONFIG.MANUAL_RESOLUTION_THRESHOLD) {
+      candidates.push({
+        employee_id: alias.employeeId,
+        canonical_name: alias.canonical,
+        similarity_score: fullNameSim,
+        is_user_confirmed: alias.confirmedByUser,
+      });
+    }
+  }
+
+  // Sort by similarity score (descending), then by user-confirmed status
+  candidates.sort((a, b) => {
+    // Prioritize user-confirmed matches
+    if (a.is_user_confirmed && !b.is_user_confirmed) return -1;
+    if (!a.is_user_confirmed && b.is_user_confirmed) return 1;
+    // Then by similarity score
+    return b.similarity_score - a.similarity_score;
+  });
+
+  // Limit to max candidates from config
+  return candidates.slice(0, NAME_MATCHING_CONFIG.MAX_CANDIDATES_PER_CONFLICT);
+}
+
+/**
+ * Analyze names for resolution (before upload)
+ * Splits names into auto-matched vs. needs-resolution
+ *
+ * This is the NEW entry point for the name resolution flow.
+ * Call this BEFORE proceeding with upload to identify conflicts.
+ *
+ * @param names - Array of names with row tracking
+ * @param source - Source of the data ('hours' or 'articles')
+ * @param supabaseClient - Optional Supabase client (for server-side)
+ * @returns NameAnalysisResult with auto-matched names and conflicts
+ *
+ * Matching priority (highest to lowest):
+ * 1. User-confirmed aliases (always use)
+ * 2. Exact matches (normalized identical)
+ * 3. High-confidence fuzzy matches (≥0.85) - auto-match
+ * 4. Medium-confidence fuzzy matches (0.75-0.84) - manual resolution
+ * 5. Low-confidence or no match (<0.75) - will create new
+ */
+export async function analyzeNamesForResolution(
+  names: Array<{ fullName: string; employeeNumber?: string; rowNumbers: number[] }>,
+  source: 'hours' | 'articles',
+  supabaseClient?: SupabaseClient
+): Promise<NameAnalysisResult> {
+  const supabase = supabaseClient || createClient();
+
+  // Step 1: Fetch all existing aliases (including confirmation status)
+  const { data: existingAliases, error: aliasError } = await supabase
+    .from('employee_aliases')
+    .select(`
+      employee_id,
+      normalized_alias,
+      confirmed_by_user,
+      employee:employees(canonical_name)
+    `);
+
+  if (aliasError) {
+    console.error('[name-resolution] Failed to fetch aliases:', aliasError.message);
+    throw new Error('Failed to fetch employee aliases');
+  }
+
+  // Step 2: Build lookup structures
+  // Priority: User-confirmed > Exact match > Fuzzy match
+  const confirmedAliases = new Map<string, string>(); // normalized → employee_id
+  const exactAliases = new Map<string, string>();
+  const fuzzyAliases: Array<{
+    employeeId: string;
+    normalized: string;
+    canonical: string;
+    confirmedByUser: boolean;
+  }> = [];
+
+  for (const alias of existingAliases || []) {
+    if (alias.confirmed_by_user) {
+      confirmedAliases.set(alias.normalized_alias, alias.employee_id);
+    } else {
+      exactAliases.set(alias.normalized_alias, alias.employee_id);
+    }
+    fuzzyAliases.push({
+      employeeId: alias.employee_id,
+      normalized: alias.normalized_alias,
+      canonical: (alias.employee as any)?.canonical_name || 'Unknown',
+      confirmedByUser: alias.confirmed_by_user || false,
+    });
+  }
+
+  // Step 3: Analyze each unique name
+  const autoMatched: AutoMatchedName[] = [];
+  const conflictsMap = new Map<string, NameConflict>();
+
+  for (const { fullName, rowNumbers } of names) {
+    const normalized = normalizeName(fullName);
+
+    // Priority 1: User-confirmed alias (always use this)
+    if (confirmedAliases.has(normalized)) {
+      autoMatched.push({
+        inputName: fullName,
+        employee_id: confirmedAliases.get(normalized)!,
+        matchType: 'user-confirmed',
+        similarity_score: 1.0,
+      });
+      continue;
+    }
+
+    // Priority 2: Exact match (normalized identical)
+    if (exactAliases.has(normalized)) {
+      autoMatched.push({
+        inputName: fullName,
+        employee_id: exactAliases.get(normalized)!,
+        matchType: 'exact',
+        similarity_score: 1.0,
+      });
+      continue;
+    }
+
+    // Priority 3: Fuzzy matching with confidence thresholds
+    const candidates = findCandidatesWithScores(normalized, fuzzyAliases);
+
+    if (candidates.length === 0) {
+      // No match found - will create new employee
+      conflictsMap.set(fullName, {
+        inputName: fullName,
+        normalized,
+        candidates: [],
+        confidence: 'low',
+        rowNumbers,
+      });
+      continue;
+    }
+
+    const bestCandidate = candidates[0];
+
+    // Auto-match if high confidence (≥0.85)
+    if (
+      bestCandidate.similarity_score >= NAME_MATCHING_CONFIG.AUTO_MATCH_THRESHOLD
+    ) {
+      autoMatched.push({
+        inputName: fullName,
+        employee_id: bestCandidate.employee_id,
+        matchType: 'fuzzy-high',
+        similarity_score: bestCandidate.similarity_score,
+      });
+      continue;
+    }
+
+    // Needs manual resolution (0.75 ≤ score < 0.85)
+    if (
+      bestCandidate.similarity_score >=
+      NAME_MATCHING_CONFIG.MANUAL_RESOLUTION_THRESHOLD
+    ) {
+      conflictsMap.set(fullName, {
+        inputName: fullName,
+        normalized,
+        candidates: candidates,
+        confidence: 'medium',
+        rowNumbers,
+      });
+      continue;
+    }
+
+    // Very low confidence (< 0.75) - will create new
+    conflictsMap.set(fullName, {
+      inputName: fullName,
+      normalized,
+      candidates: candidates.slice(0, 3), // Show top 3 for reference
+      confidence: 'low',
+      rowNumbers,
+    });
+  }
+
+  const result: NameAnalysisResult = {
+    autoMatched,
+    needsResolution: Array.from(conflictsMap.values()),
+    totalUniqueNames: names.length,
+  };
+
+  console.log(
+    `[name-resolution] Analyzed ${result.totalUniqueNames} names: ` +
+      `${result.autoMatched.length} auto-matched, ` +
+      `${result.needsResolution.length} need resolution`
+  );
+
+  return result;
+}
+
+/**
+ * Execute name resolutions and create employee mappings
+ * Called AFTER user has resolved conflicts in the UI
+ *
+ * @param resolutions - User's resolution decisions
+ * @param source - Source of the data ('hours' or 'articles')
+ * @param supabaseClient - Optional Supabase client (for server-side)
+ * @returns Map of fullName → employee_id
+ */
+export async function executeNameResolutions(
+  resolutions: NameResolution[],
+  source: 'hours' | 'articles',
+  supabaseClient?: SupabaseClient
+): Promise<Map<string, string>> {
+  const supabase = supabaseClient || createClient();
+  const resultMap = new Map<string, string>();
+
+  // Separate resolutions by action type
+  const matchResolutions = resolutions.filter((r) => r.action === 'match');
+  const createNewResolutions = resolutions.filter((r) => r.action === 'create-new');
+
+  console.log(
+    `[name-resolution] Executing ${resolutions.length} resolutions: ` +
+      `${matchResolutions.length} matches, ${createNewResolutions.length} new`
+  );
+
+  // Handle matches: Create new aliases
+  const newAliases = matchResolutions.map((r) => ({
+    employee_id: r.employee_id!,
+    alias: r.inputName,
+    normalized_alias: normalizeName(r.inputName),
+    source,
+    confirmed_by_user: r.confirmed_by_user,
+    confirmed_at: r.confirmed_by_user ? new Date().toISOString() : null,
+  }));
+
+  if (newAliases.length > 0) {
+    const { error } = await supabase
+      .from('employee_aliases')
+      .upsert(newAliases, { onConflict: 'normalized_alias' });
+
+    if (error) {
+      console.error('[name-resolution] Failed to create aliases:', error);
+    } else {
+      matchResolutions.forEach((r) => resultMap.set(r.inputName, r.employee_id!));
+    }
+  }
+
+  // Handle create-new: Batch create employees
+  const employeesToCreate = createNewResolutions.map((r) => {
+    const nameParts = r.inputName.trim().split(' ');
+    return {
+      canonical_name: normalizeForDisplay(r.inputName),
+      first_name: nameParts[0] || '',
+      last_name: nameParts.slice(1).join(' ') || '',
+    };
+  });
+
+  if (employeesToCreate.length > 0) {
+    const { data: created, error } = await supabase
+      .from('employees')
+      .upsert(employeesToCreate, { onConflict: 'canonical_name' })
+      .select('id, canonical_name');
+
+    if (error) {
+      console.error('[name-resolution] Failed to create employees:', error);
+    } else {
+      // Map created employees and create their aliases
+      const newEmployeeAliases = [];
+      for (const emp of created || []) {
+        const resolution = createNewResolutions.find(
+          (r) => normalizeForDisplay(r.inputName) === emp.canonical_name
+        );
+        if (resolution) {
+          resultMap.set(resolution.inputName, emp.id);
+          newEmployeeAliases.push({
+            employee_id: emp.id,
+            alias: resolution.inputName,
+            normalized_alias: normalizeName(resolution.inputName),
+            source,
+            confirmed_by_user: resolution.confirmed_by_user,
+            confirmed_at: resolution.confirmed_by_user
+              ? new Date().toISOString()
+              : null,
+          });
+        }
+      }
+
+      if (newEmployeeAliases.length > 0) {
+        await supabase.from('employee_aliases').insert(newEmployeeAliases);
+      }
+    }
+  }
+
+  console.log(
+    `[name-resolution] Execution complete: ${resultMap.size} names mapped`
+  );
+
+  return resultMap;
+}

@@ -3,14 +3,21 @@
 import { useState } from 'react';
 import { FileDropzone } from './FileDropzone';
 import { PreviewTable } from './PreviewTable';
+import { NameResolutionModal } from './NameResolutionModal';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { parseArticlesFile } from '@/lib/parsers/articles';
-import { ParsedArticleRow, UpsertResult } from '@/types';
+import {
+  ParsedArticleRow,
+  EnhancedUploadResult,
+  NameAnalysisResult,
+  NameResolution,
+  ResolvedNameMap,
+} from '@/types';
 import { toast } from 'sonner';
-import { FileText, Upload, CheckCircle, AlertCircle } from 'lucide-react';
+import { FileText, Upload, CheckCircle, AlertCircle, Users, Info } from 'lucide-react';
 
 export function ArticlesUploader() {
   const [file, setFile] = useState<File | null>(null);
@@ -18,7 +25,12 @@ export function ArticlesUploader() {
   const [parseErrors, setParseErrors] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadResult, setUploadResult] = useState<UpsertResult | null>(null);
+  const [uploadResult, setUploadResult] = useState<EnhancedUploadResult | null>(null);
+
+  // Name resolution state
+  const [nameAnalysis, setNameAnalysis] = useState<NameAnalysisResult | null>(null);
+  const [showNameResolution, setShowNameResolution] = useState(false);
+  const [resolvedNames, setResolvedNames] = useState<ResolvedNameMap | null>(null);
 
   const handleFileSelect = async (selectedFile: File) => {
     setFile(selectedFile);
@@ -40,48 +52,158 @@ export function ArticlesUploader() {
     }
   };
 
-  const handleUpload = async () => {
+  /**
+   * Step 1: Analyze names before upload
+   * Identifies auto-matched names vs. names needing manual resolution
+   */
+  const handleAnalyzeNames = async () => {
     if (parsedData.length === 0) return;
 
     setIsUploading(true);
     setUploadProgress(10);
 
     try {
-      toast.info('מעלה נתונים...');
-      setUploadProgress(30);
+      toast.info('מנתח שמות עובדים...');
 
-      // Call server-side API route (bypasses RLS)
-      const response = await fetch('/api/upload/articles', {
+      // Call name analysis API
+      const response = await fetch('/api/upload/analyze-names', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           rows: parsedData,
-          fileName: file?.name || 'unknown',
+          source: 'articles',
         }),
       });
 
-      setUploadProgress(80);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Name analysis failed');
+      }
+
+      const analysis: NameAnalysisResult = await response.json();
+      setNameAnalysis(analysis);
+
+      setUploadProgress(20);
+
+      // If there are conflicts, show resolution modal
+      if (analysis.needsResolution.length > 0) {
+        toast.info(
+          `נמצאו ${analysis.needsResolution.length} שמות הדורשים זיהוי ידני`
+        );
+        setShowNameResolution(true);
+        setIsUploading(false);
+      } else {
+        // No conflicts - proceed directly to upload
+        toast.success('כל השמות זוהו אוטומטית!');
+        await proceedToUpload(analysis, null);
+      }
+    } catch (error) {
+      toast.error('שגיאה בניתוח שמות');
+      console.error('Name analysis error:', error);
+      setIsUploading(false);
+    }
+  };
+
+  /**
+   * Step 2: Handle user's name resolution decisions
+   * Creates employees and aliases based on user choices
+   */
+  const handleNameResolutionComplete = async (resolutions: NameResolution[]) => {
+    if (!nameAnalysis) return;
+
+    setShowNameResolution(false);
+    setIsUploading(true);
+    setUploadProgress(30);
+
+    try {
+      toast.info('שומר החלטות זיהוי...');
+
+      // Execute name resolutions
+      const response = await fetch('/api/upload/execute-resolutions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          resolutions,
+          autoMatched: nameAnalysis.autoMatched,
+          source: 'articles',
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Resolution execution failed');
+      }
+
+      const resolved: ResolvedNameMap = await response.json();
+      setResolvedNames(resolved);
+
+      setUploadProgress(50);
+
+      // Proceed to actual data upload
+      await proceedToUpload(nameAnalysis, resolved);
+    } catch (error) {
+      toast.error('שגיאה בשמירת זיהוי שמות');
+      console.error('Resolution error:', error);
+      setIsUploading(false);
+    }
+  };
+
+  /**
+   * Step 3: Actual data upload with resolved names
+   */
+  const proceedToUpload = async (
+    analysis: NameAnalysisResult,
+    resolved: ResolvedNameMap | null
+  ) => {
+    try {
+      toast.info('מעלה נתוני כתבות...');
+      setUploadProgress(60);
+
+      // Build final name mapping
+      const nameMapping: ResolvedNameMap = { ...(resolved || {}) };
+
+      // Add auto-matched names to mapping
+      analysis.autoMatched.forEach((match) => {
+        nameMapping[match.inputName] = {
+          employee_id: match.employee_id,
+          confirmed_by_user: match.matchType === 'user-confirmed',
+        };
+      });
+
+      // Call server-side API route
+      const response = await fetch('/api/upload/articles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rows: parsedData,
+          fileName: file?.name || 'unknown',
+          nameMapping,
+        }),
+      });
+
+      setUploadProgress(90);
 
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.error || 'Upload failed');
       }
 
-      const result: UpsertResult = await response.json();
+      const result: EnhancedUploadResult = await response.json();
 
       setUploadProgress(100);
       setUploadResult(result);
 
+      // Display results
       if (result.errors && result.errors.length > 0) {
         toast.warning(
           `הושלם עם שגיאות: ${result.inserted} נוספו, ${result.updated} עודכנו, ${result.errors.length} שגיאות`
         );
       } else {
-        toast.success(
-          `הושלם! ${result.inserted} נוספו, ${result.updated} עודכנו`
-        );
+        let message = `הושלם! ${result.inserted} נוספו, ${result.updated} עודכנו`;
+        if (result.ignoredLowViewArticles && result.ignoredLowViewArticles > 0) {
+          message += `. ${result.ignoredLowViewArticles} כתבות בעלות צפיות נמוכות לא נכללו במדדים`;
+        }
+        toast.success(message);
       }
     } catch (error) {
       toast.error('שגיאה בהעלאה');
@@ -91,6 +213,13 @@ export function ArticlesUploader() {
         updated: 0,
         skipped: 0,
         errors: [error instanceof Error ? error.message : 'Unknown error'],
+        detailedErrors: [],
+        matchStats: {
+          exactMatches: 0,
+          fuzzyMatches: 0,
+          newEmployees: 0,
+        },
+        processingTimeMs: 0,
       });
     } finally {
       setIsUploading(false);
@@ -103,6 +232,9 @@ export function ArticlesUploader() {
     setParseErrors([]);
     setUploadResult(null);
     setUploadProgress(0);
+    setNameAnalysis(null);
+    setShowNameResolution(false);
+    setResolvedNames(null);
   };
 
   return (
@@ -152,21 +284,67 @@ export function ArticlesUploader() {
           )}
 
           {uploadResult && (
-            <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-              <div className="flex items-center gap-2 font-medium text-green-800 mb-2">
-                <CheckCircle className="h-4 w-4" />
-                העלאה הושלמה!
-              </div>
-              <div className="flex gap-4 text-sm">
-                <Badge variant="default">{uploadResult.inserted} נוספו</Badge>
-                <Badge variant="secondary">{uploadResult.updated} עודכנו</Badge>
+            <div className="space-y-3">
+              <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                <div className="flex items-center gap-2 font-medium text-green-800 mb-3">
+                  <CheckCircle className="h-4 w-4" />
+                  העלאה הושלמה!
+                </div>
+                <div className="flex flex-wrap gap-2 text-sm mb-3">
+                  <Badge variant="default">{uploadResult.inserted} נוספו</Badge>
+                  <Badge variant="secondary">{uploadResult.updated} עודכנו</Badge>
+                  {uploadResult.skipped > 0 && (
+                    <Badge variant="outline">{uploadResult.skipped} דולגו</Badge>
+                  )}
+                </div>
+
+                {/* Low-view articles info */}
+                {uploadResult.ignoredLowViewArticles &&
+                  uploadResult.ignoredLowViewArticles > 0 && (
+                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-start gap-2">
+                      <Info className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                      <div className="text-sm text-blue-800">
+                        <p className="font-medium mb-1">
+                          כתבות בעלות צפיות נמוכות ({uploadResult.ignoredLowViewArticles})
+                        </p>
+                        <p className="text-xs">
+                          כתבות עם פחות מ-50 צפיות נשמרו במערכת אך לא ייכללו במדדי ביצועים
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                {/* Name resolution stats */}
+                {uploadResult.nameResolutionStats && (
+                  <div className="p-3 bg-purple-50 border border-purple-200 rounded-lg">
+                    <div className="flex items-center gap-2 font-medium text-purple-800 mb-2">
+                      <Users className="h-4 w-4" />
+                      סטטיסטיקת זיהוי שמות
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      <Badge variant="outline">
+                        {uploadResult.nameResolutionStats.autoMatched} זוהו אוטומטית
+                      </Badge>
+                      {uploadResult.nameResolutionStats.manuallyResolved > 0 && (
+                        <Badge variant="outline">
+                          {uploadResult.nameResolutionStats.manuallyResolved} זוהו ידנית
+                        </Badge>
+                      )}
+                      {uploadResult.nameResolutionStats.newEmployeesCreated > 0 && (
+                        <Badge variant="outline">
+                          {uploadResult.nameResolutionStats.newEmployeesCreated} עובדים חדשים
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
 
           <div className="flex gap-2">
             <Button
-              onClick={handleUpload}
+              onClick={handleAnalyzeNames}
               disabled={parsedData.length === 0 || isUploading}
             >
               <Upload className="h-4 w-4 ml-2" />
@@ -183,6 +361,19 @@ export function ArticlesUploader() {
 
       {parsedData.length > 0 && (
         <PreviewTable type="articles" data={parsedData} />
+      )}
+
+      {/* Name Resolution Modal */}
+      {nameAnalysis && (
+        <NameResolutionModal
+          isOpen={showNameResolution}
+          conflicts={nameAnalysis.needsResolution}
+          onResolve={handleNameResolutionComplete}
+          onCancel={() => {
+            setShowNameResolution(false);
+            setIsUploading(false);
+          }}
+        />
       )}
     </div>
   );

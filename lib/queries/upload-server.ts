@@ -3,10 +3,12 @@ import {
   ParsedHoursRow,
   ParsedArticleRow,
   UpsertResult,
-  DetailedUpsertResult,
+  EnhancedUploadResult,
   DetailedError,
+  HoursWithoutArticlesWarning,
 } from '@/types';
 import { batchFindOrCreateEmployees, normalizeName } from '@/lib/matching/names';
+import { NAME_MATCHING_CONFIG } from '@/lib/config/matching-thresholds';
 
 // ============================================================================
 // VALIDATION HELPERS
@@ -184,9 +186,9 @@ export async function uploadHoursDataServer(
   supabase: SupabaseClient,
   rows: ParsedHoursRow[],
   fileName: string
-): Promise<DetailedUpsertResult> {
+): Promise<EnhancedUploadResult> {
   const startTime = Date.now();
-  const result: DetailedUpsertResult = {
+  const result: EnhancedUploadResult = {
     inserted: 0,
     updated: 0,
     skipped: 0,
@@ -194,6 +196,7 @@ export async function uploadHoursDataServer(
     detailedErrors: [],
     matchStats: { exactMatches: 0, fuzzyMatches: 0, newEmployees: 0 },
     processingTimeMs: 0,
+    hoursWithoutArticles: [],
   };
 
   try {
@@ -345,6 +348,55 @@ export async function uploadHoursDataServer(
       console.error(`[upload-server] Failed to log import: ${logError.message}`);
     }
 
+    // 7. CHECK FOR HOURS WITHOUT ARTICLES (Warning only, not blocking)
+    const employeeIdsWithHours = [...new Set(records.map(r => r.employee_id))];
+    const datesRange = {
+      start: records.reduce((min, r) => r.date < min ? r.date : min, records[0]?.date || ''),
+      end: records.reduce((max, r) => r.date > max ? r.date : max, records[0]?.date || ''),
+    };
+
+    console.log(`[upload-server] Checking for hours without articles for ${employeeIdsWithHours.length} employees`);
+
+    const { data: employeesWithArticles } = await supabase
+      .from('articles')
+      .select('employee_id')
+      .in('employee_id', employeeIdsWithHours)
+      .not('employee_id', 'is', null);
+
+    const employeeIdsWithArticles = new Set(
+      employeesWithArticles?.map(a => a.employee_id) || []
+    );
+
+    const employeeIdsWithoutArticles = employeeIdsWithHours.filter(
+      id => !employeeIdsWithArticles.has(id)
+    );
+
+    if (employeeIdsWithoutArticles.length > 0) {
+      // Fetch employee names and calculate total hours
+      const { data: employees } = await supabase
+        .from('employees')
+        .select('id, canonical_name')
+        .in('id', employeeIdsWithoutArticles);
+
+      const warnings: HoursWithoutArticlesWarning[] = [];
+
+      for (const emp of employees || []) {
+        const empHours = records
+          .filter(r => r.employee_id === emp.id)
+          .reduce((sum, r) => sum + r.hours, 0);
+
+        warnings.push({
+          employee_id: emp.id,
+          employee_name: emp.canonical_name,
+          total_hours: empHours,
+          date_range: datesRange,
+        });
+      }
+
+      result.hoursWithoutArticles = warnings;
+      console.log(`[upload-server] Found ${warnings.length} employees with hours but no articles`);
+    }
+
     result.processingTimeMs = Date.now() - startTime;
     console.log(
       `[upload-server] Hours upload complete: ` +
@@ -375,9 +427,9 @@ export async function uploadArticlesDataServer(
   supabase: SupabaseClient,
   rows: ParsedArticleRow[],
   fileName: string
-): Promise<DetailedUpsertResult> {
+): Promise<EnhancedUploadResult> {
   const startTime = Date.now();
-  const result: DetailedUpsertResult = {
+  const result: EnhancedUploadResult = {
     inserted: 0,
     updated: 0,
     skipped: 0,
@@ -385,6 +437,7 @@ export async function uploadArticlesDataServer(
     detailedErrors: [],
     matchStats: { exactMatches: 0, fuzzyMatches: 0, newEmployees: 0 },
     processingTimeMs: 0,
+    ignoredLowViewArticles: 0,
   };
 
   try {
@@ -441,8 +494,13 @@ export async function uploadArticlesDataServer(
       title: row.title,
       views: row.views,
       published_at: row.publishedAt,
+      is_low_views: row.isLowViews || row.views < NAME_MATCHING_CONFIG.LOW_VIEWS_THRESHOLD,
       updated_at: new Date().toISOString(),
     }));
+
+    // Count low-view articles for result
+    result.ignoredLowViewArticles = records.filter(r => r.is_low_views).length;
+    console.log(`[upload-server] Identified ${result.ignoredLowViewArticles} low-view articles (<${NAME_MATCHING_CONFIG.LOW_VIEWS_THRESHOLD} views)`);
 
     // 5. BATCH UPSERT
     const BATCH_SIZE = 500;

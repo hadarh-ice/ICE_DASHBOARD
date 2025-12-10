@@ -15,6 +15,8 @@ export interface EmployeeAlias {
   alias: string;
   normalized_alias: string;
   source: 'hours' | 'articles';
+  confirmed_by_user: boolean; // TRUE if user confirmed this mapping
+  confirmed_at: string | null; // When user confirmed (NULL for auto-matched)
   created_at: string;
 }
 
@@ -38,6 +40,7 @@ export interface Article {
   title: string;
   views: number;
   published_at: string;
+  is_low_views: boolean; // TRUE if views < 50
   created_at: string;
   updated_at: string;
 }
@@ -75,6 +78,7 @@ export interface ParsedArticleRow {
   title: string;
   views: number;
   publishedAt: string; // ISO date string
+  isLowViews?: boolean; // TRUE if views < 50 (excluded from metrics)
 }
 
 // Metrics types
@@ -276,6 +280,108 @@ export interface DetailedUpsertResult extends UpsertResult {
     newEmployees: number;
   };
   processingTimeMs: number;
+}
+
+// ============================================================================
+// NAME RESOLUTION TYPES
+// ============================================================================
+
+/**
+ * A candidate employee match with similarity score
+ * Shown to user in name resolution modal for selection
+ */
+export interface NameCandidate {
+  employee_id: string;
+  canonical_name: string;
+  similarity_score: number;
+  is_user_confirmed: boolean; // Has this mapping been confirmed before?
+  last_used_date?: string; // When was this alias last seen?
+}
+
+/**
+ * A single name conflict that requires user resolution
+ * Occurs when name similarity is between 0.75-0.84 (medium confidence)
+ * or when no match found (low confidence)
+ */
+export interface NameConflict {
+  inputName: string;
+  normalized: string;
+  candidates: NameCandidate[];
+  confidence: 'low' | 'medium'; // medium = 0.75-0.84, low = <0.75
+  rowNumbers: number[]; // Which rows this name appears in (for user reference)
+}
+
+/**
+ * An automatically matched name (high confidence ≥0.85)
+ * These names don't require manual resolution
+ */
+export interface AutoMatchedName {
+  inputName: string;
+  employee_id: string;
+  matchType: 'exact' | 'fuzzy-high' | 'user-confirmed';
+  similarity_score?: number;
+}
+
+/**
+ * Result of name analysis phase (before upload)
+ * Splits names into auto-matched vs. needs-resolution
+ */
+export interface NameAnalysisResult {
+  autoMatched: AutoMatchedName[];
+  needsResolution: NameConflict[];
+  totalUniqueNames: number;
+}
+
+/**
+ * User's resolution decision for a name conflict
+ * Submitted from NameResolutionModal after user chooses action
+ */
+export interface NameResolution {
+  inputName: string;
+  action: 'match' | 'create-new';
+  employee_id?: string; // Required if action is 'match'
+  confirmed_by_user: boolean; // TRUE for manual resolutions
+}
+
+/**
+ * Final name mapping after resolution
+ * Map of input name → employee_id + confirmation status
+ */
+export interface ResolvedNameMap {
+  [inputName: string]: {
+    employee_id: string;
+    confirmed_by_user: boolean;
+  };
+}
+
+/**
+ * Warning about employees with hours but no articles
+ * Shown in hours upload result as informational message
+ */
+export interface HoursWithoutArticlesWarning {
+  employee_id: string;
+  employee_name: string;
+  total_hours: number;
+  date_range: { start: string; end: string };
+}
+
+/**
+ * Enhanced upload result with additional tracking
+ * Extends DetailedUpsertResult with new features
+ */
+export interface EnhancedUploadResult extends DetailedUpsertResult {
+  // Articles-specific
+  ignoredLowViewArticles?: number; // Count of articles with views < 50
+
+  // Hours-specific
+  hoursWithoutArticles?: HoursWithoutArticlesWarning[];
+
+  // Name resolution stats
+  nameResolutionStats?: {
+    autoMatched: number;
+    manuallyResolved: number;
+    newEmployeesCreated: number;
+  };
 }
 
 // ============================================================================

@@ -2,6 +2,7 @@ import Papa from 'papaparse';
 import { ParsedArticleRow } from '@/types';
 import { parseHebrewDateTime } from '@/lib/utils/dates';
 import { parseNumber } from '@/lib/utils/numbers';
+import { NAME_MATCHING_CONFIG } from '@/lib/config/matching-thresholds';
 
 // Hebrew column name mappings
 const COLUMN_MAPPINGS = {
@@ -96,6 +97,7 @@ export async function parseArticlesFile(file: File): Promise<ParseArticlesResult
               title: title || '',
               views,
               publishedAt,
+              isLowViews: views < NAME_MATCHING_CONFIG.LOW_VIEWS_THRESHOLD,
             });
           } catch (err) {
             errors.push(`Row ${i + 2}: ${err instanceof Error ? err.message : 'Unknown error'}`);

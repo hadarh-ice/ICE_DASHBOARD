@@ -22,10 +22,11 @@ import { safeDivide } from '@/lib/utils/numbers';
 export async function getGlobalMetrics(filters: QueryFilters): Promise<GlobalMetrics> {
   const supabase = createClient();
 
-  // Build articles query
+  // Build articles query (exclude low-view articles)
   let articlesQuery = supabase
     .from('articles')
-    .select('views, employee_id');
+    .select('views, employee_id')
+    .eq('is_low_views', false);
 
   if (filters.startDate) {
     articlesQuery = articlesQuery.gte('published_at', filters.startDate);
@@ -92,11 +93,12 @@ export async function getEmployeeMetrics(filters: QueryFilters): Promise<Employe
 
   const employeeIds = employees.map(e => e.id);
 
-  // Get articles
+  // Get articles (exclude low-view articles)
   let articlesQuery = supabase
     .from('articles')
     .select('employee_id, views')
-    .in('employee_id', employeeIds);
+    .in('employee_id', employeeIds)
+    .eq('is_low_views', false);
 
   if (filters.startDate) {
     articlesQuery = articlesQuery.gte('published_at', filters.startDate);
@@ -174,6 +176,7 @@ export async function getTopArticles(
       published_at,
       employee:employees(canonical_name)
     `)
+    .eq('is_low_views', false)
     .order('views', { ascending: false })
     .limit(limit);
 
@@ -305,7 +308,8 @@ export async function getArticlesTimeSeries(
 
   let query = supabase
     .from('articles')
-    .select('published_at, views, employee_id');
+    .select('published_at, views, employee_id')
+    .eq('is_low_views', false);
 
   if (filters.startDate) {
     query = query.gte('published_at', filters.startDate);
@@ -385,10 +389,11 @@ export async function detectMissingData(filters: QueryFilters): Promise<DataGap[
 
   const { data: allHours } = await hoursQuery;
 
-  // Get articles counts per employee
+  // Get articles counts per employee (exclude low-view articles)
   let articlesQuery = supabase
     .from('articles')
-    .select('employee_id');
+    .select('employee_id')
+    .eq('is_low_views', false);
 
   if (filters.startDate) articlesQuery = articlesQuery.gte('published_at', filters.startDate);
   if (filters.endDate) articlesQuery = articlesQuery.lte('published_at', filters.endDate + 'T23:59:59');
@@ -525,7 +530,7 @@ export async function detectAnomalies(
 export async function getArticleHoursAnalysis(filters: QueryFilters): Promise<EmployeeArticleHours[]> {
   const supabase = createClient();
 
-  // Get articles with employee info
+  // Get articles with employee info (exclude low-view articles)
   let articlesQuery = supabase
     .from('articles')
     .select(`
@@ -535,7 +540,8 @@ export async function getArticleHoursAnalysis(filters: QueryFilters): Promise<Em
       published_at,
       employee_id,
       employee:employees(canonical_name)
-    `);
+    `)
+    .eq('is_low_views', false);
 
   if (filters.startDate) articlesQuery = articlesQuery.gte('published_at', filters.startDate);
   if (filters.endDate) articlesQuery = articlesQuery.lte('published_at', filters.endDate + 'T23:59:59');
