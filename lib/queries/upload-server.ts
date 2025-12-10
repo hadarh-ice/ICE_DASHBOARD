@@ -1,3 +1,18 @@
+/**
+ * ICE Analytics - Upload Server Functions
+ *
+ * NOTE: For simpler data operations without validation/parsing, see lib/supabase/operations.ts
+ * operations.ts provides:
+ * - batchUpsertHours: Direct hours upsert with business logic (latest wins)
+ * - batchUpsertArticles: Direct articles upsert with business logic (MAX views)
+ * - deleteHoursByDateRange / deleteArticlesByDateRange: Safe deletion with confirmation
+ *
+ * This file (upload-server.ts) provides:
+ * - Full upload workflow with validation, parsing, error tracking
+ * - Sophisticated Hebrew name matching and user confirmation
+ * - Detailed error reporting for UI display
+ */
+
 import { SupabaseClient } from '@supabase/supabase-js';
 import {
   ParsedHoursRow,
@@ -476,27 +491,38 @@ export async function uploadArticlesDataServer(
 
     result.matchStats.exactMatches = employeeMap.size;
 
-    // 3. CHECK EXISTING ARTICLES
+    // 3. CHECK EXISTING ARTICLES AND GET THEIR VIEW COUNTS
+    // PRD REQUIREMENT: Keep MAX(old_views, new_views) for cumulative tracking
     const articleIds = validRows.map(r => r.articleId);
     const { data: existingArticles } = await supabase
       .from('articles')
-      .select('article_id')
+      .select('article_id, views')
       .in('article_id', articleIds);
 
-    const existingIds = new Set(existingArticles?.map(a => a.article_id) || []);
+    const existingViewsMap = new Map(
+      existingArticles?.map(a => [a.article_id, a.views]) || []
+    );
 
-    console.log(`[upload-server] Found ${existingIds.size} existing articles`);
+    console.log(`[upload-server] Found ${existingViewsMap.size} existing articles`);
 
-    // 4. PREPARE RECORDS
-    const records = validRows.map(row => ({
-      article_id: row.articleId,
-      employee_id: employeeMap.get(row.fullName) || null,
-      title: row.title,
-      views: row.views,
-      published_at: row.publishedAt,
-      is_low_views: row.isLowViews || row.views < NAME_MATCHING_CONFIG.LOW_VIEWS_THRESHOLD,
-      updated_at: new Date().toISOString(),
-    }));
+    // 4. PREPARE RECORDS WITH MAX VIEWS LOGIC
+    const records = validRows.map(row => {
+      const existingViews = existingViewsMap.get(row.articleId);
+      // PRD BUSINESS LOGIC: Keep highest view count (cumulative maximum)
+      const finalViews = existingViews !== undefined
+        ? Math.max(existingViews, row.views)
+        : row.views;
+
+      return {
+        article_id: row.articleId,
+        employee_id: employeeMap.get(row.fullName) || null,
+        title: row.title,
+        views: finalViews, // MAX(old_views, new_views)
+        published_at: row.publishedAt,
+        is_low_views: finalViews < NAME_MATCHING_CONFIG.LOW_VIEWS_THRESHOLD,
+        updated_at: new Date().toISOString(),
+      };
+    });
 
     // Count low-view articles for result
     result.ignoredLowViewArticles = records.filter(r => r.is_low_views).length;
@@ -523,7 +549,7 @@ export async function uploadArticlesDataServer(
         result.errors.push(`שגיאה באצווה ${batchNum}: ${error.message}`);
       } else {
         for (const record of batch) {
-          if (existingIds.has(record.article_id)) {
+          if (existingViewsMap.has(record.article_id)) {
             result.updated++;
           } else {
             result.inserted++;

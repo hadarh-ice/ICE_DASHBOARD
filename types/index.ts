@@ -1,7 +1,8 @@
 // Database types
 export interface Employee {
   id: string;
-  canonical_name: string;
+  canonical_name: string; // Display name with original capitalization (e.g., "David Cohen")
+  normalized_name: string; // Normalized for matching (e.g., "david cohen") - lowercase, trimmed
   first_name: string;
   last_name: string;
   employee_number: string | null;
