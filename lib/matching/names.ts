@@ -266,7 +266,8 @@ export async function batchFindOrCreateEmployees(
     .select('employee_id, normalized_alias');
 
   if (aliasError) {
-    console.error('[name-matching] Failed to fetch aliases:', aliasError.message);
+    console.error('[name-matching] CRITICAL: Failed to fetch aliases:', aliasError.message);
+    throw new Error(`שגיאה קריטית בזיהוי עובדים: ${aliasError.message}`);
   }
 
   // Build lookup maps
@@ -706,13 +707,15 @@ export async function executeNameResolutions(
   }));
 
   if (newAliases.length > 0) {
+    console.log(`[name-resolution] 📝 Creating ${newAliases.length} aliases for matched employees...`);
     const { error } = await supabase
       .from('employee_aliases')
       .upsert(newAliases, { onConflict: 'normalized_alias' });
 
     if (error) {
-      console.error('[name-resolution] Failed to create aliases:', error);
+      console.error('[name-resolution] ❌ Failed to create aliases for matches:', error);
     } else {
+      console.log(`[name-resolution] ✅ Created ${newAliases.length} aliases for matched employees`);
       matchResolutions.forEach((r) => resultMap.set(r.inputName, r.employee_id!));
     }
   }
@@ -722,21 +725,46 @@ export async function executeNameResolutions(
     const nameParts = r.inputName.trim().split(' ');
     return {
       canonical_name: normalizeForDisplay(r.inputName),
+      normalized_name: normalizeName(r.inputName), // Required field (added in migration 004)
       first_name: nameParts[0] || '',
       last_name: nameParts.slice(1).join(' ') || '',
     };
   });
 
   if (employeesToCreate.length > 0) {
-    const { data: created, error } = await supabase
+    console.log(`[name-resolution] 📝 Creating ${employeesToCreate.length} new employees...`);
+
+    let { data: created, error } = await supabase
       .from('employees')
-      .upsert(employeesToCreate, { onConflict: 'canonical_name' })
+      .insert(employeesToCreate)
       .select('id, canonical_name');
 
     if (error) {
-      console.error('[name-resolution] Failed to create employees:', error);
+      console.error('[name-resolution] ❌ Failed to create employees:', error);
+
+      // Handle duplicate key error gracefully (employees may already exist from previous upload)
+      if (error.code === '23505') {
+        console.log('[name-resolution] 🔍 Duplicate employees detected, fetching existing...');
+        const { data: existing, error: fetchError } = await supabase
+          .from('employees')
+          .select('id, canonical_name')
+          .in('canonical_name', employeesToCreate.map(e => e.canonical_name));
+
+        if (!fetchError && existing) {
+          console.log(`[name-resolution] ✅ Found ${existing.length} existing employees`);
+          created = existing; // Process as if they were just created
+          error = null; // Clear error to continue processing
+        } else {
+          console.error('[name-resolution] ❌ Failed to fetch existing employees:', fetchError);
+        }
+      }
     } else {
+      console.log(`[name-resolution] ✅ Employee insert success: ${created?.length || 0} employees created`);
+    }
+
+    if (!error && created) {
       // Map created employees and create their aliases
+      console.log(`[name-resolution] 📝 Creating aliases for ${created.length} employees...`);
       const newEmployeeAliases = [];
       for (const emp of created || []) {
         const resolution = createNewResolutions.find(
@@ -758,14 +786,20 @@ export async function executeNameResolutions(
       }
 
       if (newEmployeeAliases.length > 0) {
-        await supabase.from('employee_aliases').insert(newEmployeeAliases);
+        const { error: aliasError } = await supabase.from('employee_aliases').insert(newEmployeeAliases);
+        if (aliasError) {
+          console.error('[name-resolution] ❌ Failed to create aliases:', aliasError);
+        } else {
+          console.log(`[name-resolution] ✅ Created ${newEmployeeAliases.length} employee aliases`);
+        }
       }
     }
   }
 
   console.log(
-    `[name-resolution] Execution complete: ${resultMap.size} names mapped`
+    `[name-resolution] ✅ Execution complete: ${resultMap.size} names mapped`
   );
+  console.log('[name-resolution] 📤 Returning name map to caller');
 
   return resultMap;
 }

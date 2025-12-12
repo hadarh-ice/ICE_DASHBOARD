@@ -246,14 +246,18 @@ export async function getTopArticles(
     if (error) throw error;
 
     // Transform data to match TopArticle interface
-    return data.map(article => ({
-      article_id: article.article_id,
-      title: article.title,
-      views: article.views,
-      published_at: article.published_at,
-      employee_id: article.employee_id,
-      employee_name: article.employees?.canonical_name || null,
-    }));
+    return data.map(article => {
+      // Supabase returns employees as object when using !inner, but TS may infer array
+      const employeeData = article.employees as unknown as { canonical_name: string } | null;
+      return {
+        article_id: article.article_id,
+        title: article.title,
+        views: article.views,
+        published_at: article.published_at,
+        employee_id: article.employee_id,
+        employee_name: employeeData?.canonical_name || null,
+      };
+    });
   } catch (error) {
     console.error('Error fetching top articles:', error);
     throw new Error(

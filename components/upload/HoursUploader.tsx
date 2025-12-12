@@ -88,9 +88,19 @@ export function HoursUploader() {
         );
         setShowNameResolution(true);
       } else {
-        // No conflicts - proceed directly to upload
+        // No conflicts - build name map from auto-matched and proceed to upload
         toast.success('כל השמות זוהו אוטומטית');
-        await proceedToUpload(analysis);
+
+        // Build name map from auto-matched names
+        const autoMatchedMap: ResolvedNameMap = {};
+        analysis.autoMatched.forEach((match) => {
+          autoMatchedMap[match.inputName] = {
+            employee_id: match.employee_id,
+            confirmed_by_user: false, // Auto-matched, not user confirmed
+          };
+        });
+
+        await proceedToUpload(analysis, undefined, autoMatchedMap);
       }
     } catch (error) {
       toast.error('שגיאה בניתוח שמות');
@@ -101,11 +111,17 @@ export function HoursUploader() {
 
   // Step 2: Handle name resolution completion
   const handleNameResolutionComplete = async (resolutions: NameResolution[]) => {
+    console.log('[HoursUploader] ✅ handleNameResolutionComplete called');
+    console.log('[HoursUploader] Received resolutions:', resolutions);
+
+    setShowNameResolution(false); // Close modal immediately to prevent Dialog state desync
+
     try {
       toast.info('מעבד החלטות...');
       setUploadProgress(30);
 
       // Execute resolutions on server
+      console.log('[HoursUploader] 📤 Sending POST to /api/upload/execute-resolutions');
       const response = await fetch('/api/upload/execute-resolutions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -116,19 +132,20 @@ export function HoursUploader() {
         }),
       });
 
+      console.log('[HoursUploader] 📥 Response received:', response.status);
+
       if (!response.ok) {
         throw new Error('Failed to execute resolutions');
       }
 
       const nameMap: ResolvedNameMap = await response.json();
       setResolvedNames(nameMap);
-      setShowNameResolution(false);
       setUploadProgress(40);
 
       console.log('[HoursUploader] Resolutions executed:', nameMap);
 
       // Proceed to upload with resolved names
-      await proceedToUpload(nameAnalysis!, resolutions);
+      await proceedToUpload(nameAnalysis!, resolutions, nameMap);
     } catch (error) {
       toast.error('שגיאה בעיבוד החלטות');
       console.error('Resolution error:', error);
@@ -139,7 +156,8 @@ export function HoursUploader() {
   // Step 3: Proceed to actual upload
   const proceedToUpload = async (
     analysis: NameAnalysisResult,
-    resolutions?: NameResolution[]
+    resolutions?: NameResolution[],
+    nameMapParam?: ResolvedNameMap
   ) => {
     setIsUploading(true);
 
@@ -156,6 +174,7 @@ export function HoursUploader() {
         body: JSON.stringify({
           rows: parsedData,
           fileName: file?.name || 'unknown',
+          resolvedNames: nameMapParam || resolvedNames, // Use param if provided, else state
         }),
       });
 

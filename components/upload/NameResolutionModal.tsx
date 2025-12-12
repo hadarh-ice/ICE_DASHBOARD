@@ -83,12 +83,21 @@ export function NameResolutionModal({
 
   // Handle final submission
   const handleSubmit = () => {
+    console.log('[NameResolutionModal] ✅ Finish button clicked');
+    console.log('[NameResolutionModal] Total conflicts:', conflicts.length);
+    console.log('[NameResolutionModal] Resolutions stored:', resolutions.size);
+
     // Check if all conflicts are resolved
     const unresolvedCount = conflicts.filter(
       (c) => !resolutions.has(c.inputName)
     ).length;
 
     if (unresolvedCount > 0) {
+      const unresolvedNames = conflicts.filter(c => !resolutions.has(c.inputName)).map(c => c.inputName);
+      console.warn('[NameResolutionModal] ⚠️ Found unresolved conflicts:', unresolvedNames);
+      console.log('[NameResolutionModal] Resolution keys:', Array.from(resolutions.keys()));
+      console.log('[NameResolutionModal] Conflict keys:', conflicts.map(c => c.inputName));
+
       // Find first unresolved and jump to it
       const firstUnresolved = conflicts.findIndex(
         (c) => !resolutions.has(c.inputName)
@@ -98,6 +107,8 @@ export function NameResolutionModal({
     }
 
     // All resolved - submit
+    console.log('[NameResolutionModal] ✅ All conflicts resolved! Submitting employee mappings...');
+    console.log('[NameResolutionModal] Mappings to submit:', Array.from(resolutions.values()));
     onResolve(Array.from(resolutions.values()));
   };
 
@@ -290,6 +301,7 @@ export function NameResolutionModal({
             </Button>
           ) : (
             <Button
+              type="button"
               onClick={handleSubmit}
               disabled={resolvedCount !== totalCount}
               className="flex-1"

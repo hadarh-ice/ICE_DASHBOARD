@@ -85,6 +85,11 @@ export const NAME_MATCHING_CONFIG = {
   MAX_CANDIDATES_PER_CONFLICT: 5,
 } as const;
 
+// Re-export individual constants for convenience
+export const LOW_VIEWS_THRESHOLD = NAME_MATCHING_CONFIG.LOW_VIEWS_THRESHOLD;
+export const AUTO_MATCH_THRESHOLD = NAME_MATCHING_CONFIG.AUTO_MATCH_THRESHOLD;
+export const MANUAL_RESOLUTION_THRESHOLD = NAME_MATCHING_CONFIG.MANUAL_RESOLUTION_THRESHOLD;
+
 /**
  * Get confidence level from similarity score
  * Used for UI display and decision-making

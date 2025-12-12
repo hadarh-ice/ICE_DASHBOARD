@@ -13,8 +13,114 @@ import {
   EmployeeRanking,
   WeeklyBreakdown,
   Period,
+  TimeResolution,
+  EmployeeTrendPoint,
+  DashboardKPIs,
+  EmployeeEfficiency,
+  EmployeeTrends,
 } from '@/types';
 import { safeDivide } from '@/lib/utils/numbers';
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+/**
+ * Filter articles by shift (client-side)
+ * Morning: 07:00-15:00, Evening: 15:00-23:00
+ * @param articles Array of articles with published_at field
+ * @param shift Shift filter ('all' | 'morning' | 'evening')
+ * @returns Filtered articles array
+ */
+function filterByShift(articles: any[], shift?: 'all' | 'morning' | 'evening'): any[] {
+  if (!shift || shift === 'all') return articles;
+
+  return articles.filter(article => {
+    const hour = new Date(article.published_at).getHours();
+    if (shift === 'morning') return hour >= 7 && hour < 15;
+    if (shift === 'evening') return hour >= 15 && hour < 23;
+    return true;
+  });
+}
+
+/**
+ * Check if a date is Saturday (Sabbath)
+ * @param date Date object or ISO date string
+ * @returns True if date is Saturday
+ */
+function isSabbath(date: Date | string): boolean {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  return d.getDay() === 6; // Saturday = 6
+}
+
+/**
+ * Filter out Sabbath dates if excludeSabbath is true
+ * @param items Array of items with date or published_at field
+ * @param excludeSabbath Whether to exclude Sabbath
+ * @returns Filtered array
+ */
+function filterSabbath<T extends { date?: string; published_at?: string }>(
+  items: T[],
+  excludeSabbath: boolean
+): T[] {
+  if (!excludeSabbath) return items;
+
+  return items.filter(item => {
+    const dateStr = item.date || item.published_at;
+    return dateStr ? !isSabbath(dateStr) : true;
+  });
+}
+
+/**
+ * Get bucket string for a date based on resolution
+ * @param date Date object
+ * @param resolution Time resolution (daily/weekly/monthly/yearly)
+ * @returns Bucket string (e.g., "2024-01", "2024-W01", "2024-01-15")
+ */
+function getBucket(date: Date, resolution: TimeResolution): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+
+  switch (resolution) {
+    case 'daily':
+      return `${year}-${month}-${day}`;
+    case 'weekly':
+      return getWeekBucket(date);
+    case 'monthly':
+      return `${year}-${month}`;
+    case 'yearly':
+      return `${year}`;
+  }
+}
+
+/**
+ * Get ISO week bucket (YYYY-Wnn format)
+ * @param date Date object
+ * @returns Week bucket string (e.g., "2024-W01")
+ */
+function getWeekBucket(date: Date): string {
+  const year = date.getFullYear();
+  const weekNum = getISOWeekNumber(date);
+  return `${year}-W${String(weekNum).padStart(2, '0')}`;
+}
+
+/**
+ * Get ISO week number (1-53)
+ * @param date Date object
+ * @returns Week number
+ */
+function getISOWeekNumber(date: Date): number {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+  const yearStart = new Date(d.getFullYear(), 0, 1);
+  return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+}
+
+// ============================================================================
+// EXISTING METRICS FUNCTIONS
+// ============================================================================
 
 /**
  * Get global metrics for the dashboard
@@ -761,4 +867,346 @@ export async function getWeeklyBreakdown(filters: QueryFilters): Promise<WeeklyB
     avg_hours: data.count > 0 ? Math.round((data.totalHours / data.count) * 100) / 100 : 0,
     employee_count: data.employees.size,
   }));
+}
+
+// ============================================================================
+// PRD ANALYTICS FUNCTIONS
+// ============================================================================
+
+/**
+ * Get dashboard KPIs for macro view
+ * Includes aggregated metrics and top articles
+ * @param filters Query filters (date range, shift, Sabbath exclusion)
+ * @param topArticlesLimit Number of top articles to return (default: 5)
+ * @returns Dashboard KPIs with averages
+ */
+export async function getDashboardKPIs(
+  filters: QueryFilters,
+  topArticlesLimit: number = 5
+): Promise<DashboardKPIs> {
+  const supabase = createClient();
+
+  // Fetch articles (exclude low-view articles)
+  let articlesQuery = supabase
+    .from('articles')
+    .select('views, employee_id, published_at')
+    .eq('is_low_views', false);
+
+  if (filters.startDate) {
+    articlesQuery = articlesQuery.gte('published_at', filters.startDate);
+  }
+  if (filters.endDate) {
+    articlesQuery = articlesQuery.lte('published_at', filters.endDate + 'T23:59:59');
+  }
+  if (filters.employeeIds?.length) {
+    articlesQuery = articlesQuery.in('employee_id', filters.employeeIds);
+  }
+
+  const { data: articles } = await articlesQuery;
+
+  // Apply filters
+  let filteredArticles = filterSabbath(articles || [], filters.excludeSabbath || false);
+  filteredArticles = filterByShift(filteredArticles, filters.shift);
+
+  // Fetch hours
+  let hoursQuery = supabase
+    .from('daily_hours')
+    .select('hours, date, employee_id');
+
+  if (filters.startDate) {
+    hoursQuery = hoursQuery.gte('date', filters.startDate);
+  }
+  if (filters.endDate) {
+    hoursQuery = hoursQuery.lte('date', filters.endDate);
+  }
+  if (filters.employeeIds?.length) {
+    hoursQuery = hoursQuery.in('employee_id', filters.employeeIds);
+  }
+
+  const { data: hours } = await hoursQuery;
+  const filteredHours = filterSabbath(hours || [], filters.excludeSabbath || false);
+
+  // Calculate totals
+  const totalArticles = filteredArticles.length;
+  const totalViews = filteredArticles.reduce((sum, a) => sum + (a.views || 0), 0);
+  const totalHours = filteredHours.reduce((sum, h) => sum + (Number(h.hours) || 0), 0);
+
+  // Calculate averages (round UP for efficiency, 2 decimals for pace)
+  const avgEfficiency = totalHours > 0 ? Math.ceil(totalViews / totalHours) : 0;
+  const avgPace = totalHours > 0 ? Math.round((totalArticles / totalHours) * 100) / 100 : 0;
+
+  // Get top articles
+  const topArticles = await getTopArticles(filters, topArticlesLimit);
+
+  return {
+    total_views: totalViews,
+    total_articles: totalArticles,
+    total_hours: Math.round(totalHours * 100) / 100,
+    avg_efficiency: avgEfficiency,
+    avg_pace: avgPace,
+    top_articles: topArticles,
+  };
+}
+
+/**
+ * Get employee efficiency table with performance flags
+ * Shows ALL employees with hours, even if 0 articles in shift
+ * @param filters Query filters (date range, shift, Sabbath exclusion)
+ * @returns Array of employee efficiency data sorted by efficiency DESC
+ */
+export async function getEmployeeEfficiencyTable(
+  filters: QueryFilters
+): Promise<EmployeeEfficiency[]> {
+  const supabase = createClient();
+
+  // Fetch ALL employees with hours in the date range
+  let hoursQuery = supabase
+    .from('daily_hours')
+    .select('employee_id, hours, date')
+    .not('employee_id', 'is', null);
+
+  if (filters.startDate) {
+    hoursQuery = hoursQuery.gte('date', filters.startDate);
+  }
+  if (filters.endDate) {
+    hoursQuery = hoursQuery.lte('date', filters.endDate);
+  }
+  if (filters.employeeIds?.length) {
+    hoursQuery = hoursQuery.in('employee_id', filters.employeeIds);
+  }
+
+  const { data: hours } = await hoursQuery;
+  const filteredHours = filterSabbath(hours || [], filters.excludeSabbath || false);
+
+  // Get unique employee IDs with hours
+  const employeeIds = [...new Set(filteredHours.map(h => h.employee_id))];
+
+  if (employeeIds.length === 0) return [];
+
+  // Fetch employee names
+  const { data: employees } = await supabase
+    .from('employees')
+    .select('id, canonical_name')
+    .in('id', employeeIds);
+
+  // Fetch articles for these employees
+  let articlesQuery = supabase
+    .from('articles')
+    .select('employee_id, views, published_at')
+    .eq('is_low_views', false)
+    .in('employee_id', employeeIds);
+
+  if (filters.startDate) {
+    articlesQuery = articlesQuery.gte('published_at', filters.startDate);
+  }
+  if (filters.endDate) {
+    articlesQuery = articlesQuery.lte('published_at', filters.endDate + 'T23:59:59');
+  }
+
+  const { data: articles } = await articlesQuery;
+
+  // Apply filters to articles
+  let filteredArticles = filterSabbath(articles || [], filters.excludeSabbath || false);
+  filteredArticles = filterByShift(filteredArticles, filters.shift);
+
+  // Build efficiency data
+  const efficiencyData: EmployeeEfficiency[] = [];
+
+  for (const employee of employees || []) {
+    const empArticles = filteredArticles.filter(a => a.employee_id === employee.id);
+    const empHours = filteredHours.filter(h => h.employee_id === employee.id);
+
+    const articleCount = empArticles.length;
+    const totalViews = empArticles.reduce((sum, a) => sum + (a.views || 0), 0);
+    const totalHours = empHours.reduce((sum, h) => sum + (Number(h.hours) || 0), 0);
+
+    const pace = safeDivide(articleCount, totalHours);
+    const efficiency = safeDivide(totalViews, totalHours);
+
+    // Calculate flags
+    const noHours = totalHours === 0;
+    const highPace = pace !== null && pace > 2.0;
+
+    // Check missing_hours_with_articles flag
+    // Employee has articles on days with no hours records
+    const articleDates = new Set(
+      empArticles.map(a => new Date(a.published_at).toISOString().split('T')[0])
+    );
+    const hoursDates = new Set(empHours.map(h => h.date));
+    const missingHoursWithArticles = Array.from(articleDates).some(date => !hoursDates.has(date));
+
+    efficiencyData.push({
+      employee_id: employee.id,
+      employee_name: employee.canonical_name,
+      article_count: articleCount,
+      total_views: totalViews,
+      total_hours: Math.round(totalHours * 100) / 100,
+      pace: pace ? Math.round(pace * 100) / 100 : null,
+      efficiency: efficiency ? Math.round(efficiency) : null,
+      missing_hours_with_articles: missingHoursWithArticles,
+      no_hours: noHours,
+      high_pace: highPace,
+    });
+  }
+
+  // Sort by efficiency DESC (nulls last)
+  return efficiencyData.sort((a, b) => {
+    if (a.efficiency === null && b.efficiency === null) return 0;
+    if (a.efficiency === null) return 1;
+    if (b.efficiency === null) return -1;
+    return b.efficiency - a.efficiency;
+  });
+}
+
+/**
+ * Get employee trends bucketed by time resolution
+ * Supports period comparison for A/B analysis
+ * @param employeeId Employee ID
+ * @param startDate Start date (YYYY-MM-DD)
+ * @param endDate End date (YYYY-MM-DD)
+ * @param resolution Time resolution (daily/weekly/monthly/yearly)
+ * @param comparePeriod Optional comparison period
+ * @param excludeSabbath Exclude Saturday data (default: false)
+ * @returns Employee trends with bucketed data
+ */
+export async function getEmployeeTrends(
+  employeeId: string,
+  startDate: string,
+  endDate: string,
+  resolution: TimeResolution,
+  comparePeriod?: { start_date: string; end_date: string },
+  excludeSabbath: boolean = false
+): Promise<EmployeeTrends> {
+  const supabase = createClient();
+
+  // Get employee name
+  const { data: employee } = await supabase
+    .from('employees')
+    .select('canonical_name')
+    .eq('id', employeeId)
+    .single();
+
+  if (!employee) {
+    throw new Error('Employee not found');
+  }
+
+  // Fetch period A data
+  const periodAData = await fetchEmployeePeriodData(
+    supabase,
+    employeeId,
+    startDate,
+    endDate,
+    resolution,
+    excludeSabbath
+  );
+
+  // Fetch period B data if comparison requested
+  let comparison = undefined;
+  if (comparePeriod) {
+    const periodBData = await fetchEmployeePeriodData(
+      supabase,
+      employeeId,
+      comparePeriod.start_date,
+      comparePeriod.end_date,
+      resolution,
+      excludeSabbath
+    );
+    comparison = {
+      period_a: periodAData,
+      period_b: periodBData,
+    };
+  }
+
+  return {
+    employee_id: employeeId,
+    employee_name: employee.canonical_name,
+    resolution,
+    data: periodAData,
+    comparison,
+  };
+}
+
+/**
+ * Helper: Fetch and bucket employee data for a specific period
+ * @param supabase Supabase client
+ * @param employeeId Employee ID
+ * @param startDate Start date (YYYY-MM-DD)
+ * @param endDate End date (YYYY-MM-DD)
+ * @param resolution Time resolution
+ * @param excludeSabbath Exclude Saturday data
+ * @returns Array of trend points
+ */
+async function fetchEmployeePeriodData(
+  supabase: any,
+  employeeId: string,
+  startDate: string,
+  endDate: string,
+  resolution: TimeResolution,
+  excludeSabbath: boolean
+): Promise<EmployeeTrendPoint[]> {
+  // Fetch articles
+  const { data: articles } = await supabase
+    .from('articles')
+    .select('published_at, views')
+    .eq('employee_id', employeeId)
+    .eq('is_low_views', false)
+    .gte('published_at', startDate)
+    .lte('published_at', endDate + 'T23:59:59');
+
+  // Fetch hours
+  const { data: hours } = await supabase
+    .from('daily_hours')
+    .select('date, hours')
+    .eq('employee_id', employeeId)
+    .gte('date', startDate)
+    .lte('date', endDate);
+
+  // Apply Sabbath filter
+  const filteredArticles = filterSabbath(articles || [], excludeSabbath);
+  const filteredHours = filterSabbath(hours || [], excludeSabbath);
+
+  // Bucket data by resolution
+  const buckets = new Map<string, {
+    hours: number;
+    articles: number;
+    views: number;
+  }>();
+
+  // Bucket hours
+  for (const h of filteredHours) {
+    if (!h.date) continue;
+    const bucket = getBucket(new Date(h.date), resolution);
+    if (!buckets.has(bucket)) {
+      buckets.set(bucket, { hours: 0, articles: 0, views: 0 });
+    }
+    buckets.get(bucket)!.hours += Number((h as any).hours) || 0;
+  }
+
+  // Bucket articles
+  for (const a of filteredArticles) {
+    if (!a.published_at) continue;
+    const bucket = getBucket(new Date(a.published_at), resolution);
+    if (!buckets.has(bucket)) {
+      buckets.set(bucket, { hours: 0, articles: 0, views: 0 });
+    }
+    buckets.get(bucket)!.articles++;
+    buckets.get(bucket)!.views += (a as any).views || 0;
+  }
+
+  // Convert to trend points
+  return Array.from(buckets.entries())
+    .map(([bucket, data]) => {
+      const pace = safeDivide(data.articles, data.hours);
+      const efficiency = safeDivide(data.views, data.hours);
+
+      return {
+        bucket,
+        hours: Math.round(data.hours * 100) / 100,
+        article_count: data.articles,
+        total_views: data.views,
+        pace: pace ? Math.round(pace * 100) / 100 : null,
+        efficiency: efficiency ? Math.round(efficiency) : null,
+      };
+    })
+    .sort((a, b) => a.bucket.localeCompare(b.bucket));
 }

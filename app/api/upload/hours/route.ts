@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { uploadHoursDataServer } from '@/lib/queries/upload-server';
-import { ParsedHoursRow } from '@/types';
+import { ParsedHoursRow, ResolvedNameMap } from '@/types';
 
 // Maximum rows allowed per upload to prevent timeouts
 const MAX_ROWS_PER_UPLOAD = 10000;
@@ -12,7 +12,11 @@ export async function POST(request: NextRequest) {
   try {
     // Parse request body
     const body = await request.json();
-    const { rows, fileName } = body as { rows: ParsedHoursRow[]; fileName: string };
+    const { rows, fileName, resolvedNames: resolvedNameMap } = body as {
+      rows: ParsedHoursRow[];
+      fileName: string;
+      resolvedNames?: ResolvedNameMap;
+    };
 
     // Validate input
     if (!rows || !Array.isArray(rows)) {
@@ -40,13 +44,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log(`[API /upload/hours] Starting upload of ${rows.length} rows from "${fileName || 'unknown'}"`);
+    console.log(`[API /upload/hours] 📥 Received upload request:`, {
+      rowCount: rows.length,
+      fileName: fileName || 'unknown',
+      hasResolvedNames: !!resolvedNameMap,
+      resolvedNamesCount: resolvedNameMap ? Object.keys(resolvedNameMap).length : 0,
+    });
 
     // Create admin client (bypasses RLS)
     const supabase = createAdminClient();
 
-    // Upload data
-    const result = await uploadHoursDataServer(supabase, rows, fileName || 'unknown');
+    // Upload data with resolved name map (if provided)
+    const result = await uploadHoursDataServer(
+      supabase,
+      rows,
+      fileName || 'unknown',
+      resolvedNameMap
+    );
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
     console.log(`[API /upload/hours] Completed in ${duration}s: ${result.inserted} inserted, ${result.updated} updated, ${result.skipped} skipped, ${result.errors.length} errors`);

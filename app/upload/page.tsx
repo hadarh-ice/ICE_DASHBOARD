@@ -8,7 +8,8 @@ import { AppShell } from '@/components/layout/AppShell';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { HoursUploader } from '@/components/upload/HoursUploader';
 import { ArticlesUploader } from '@/components/upload/ArticlesUploader';
-import { Clock, FileText, Loader2 } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Clock, FileText, Loader2, Info, AlertCircle } from 'lucide-react';
 import { listContainerVariants, listItemVariants } from '@/lib/animations';
 
 export default function UploadPage() {
@@ -58,6 +59,40 @@ export default function UploadPage() {
           <p className="text-sm text-muted-foreground mt-1">
             העלה קבצי שעות עבודה וכתבות
           </p>
+        </motion.div>
+
+        {/* Upload Instructions */}
+        <motion.div variants={listItemVariants}>
+          <Card className="bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-lg text-blue-800 dark:text-blue-200">
+                <Info className="h-5 w-5" />
+                הוראות העלאה
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm text-blue-900 dark:text-blue-100">
+              <ol className="list-decimal list-inside space-y-2 mr-1">
+                <li>
+                  <strong>שלב 1:</strong> העלה קובץ <strong>שעות</strong> (XLSX) - מכיל את כל העובדים והשעות שלהם
+                </li>
+                <li>
+                  <strong>שלב 2:</strong> אם מופיעים עובדים חדשים - אשר את השמות או בצע התאמה לעובדים קיימים
+                </li>
+                <li>
+                  <strong>שלב 3:</strong> העלה קובץ <strong>כתבות</strong> (CSV) - יקושר אוטומטית לעובדים קיימים
+                </li>
+                <li>
+                  <strong>שלב 4:</strong> אם מופיעים כותבים חדשים - אשר או התאם לעובדים קיימים
+                </li>
+              </ol>
+              <div className="mt-4 p-3 bg-amber-100 dark:bg-amber-900/30 rounded-lg flex items-start gap-2">
+                <AlertCircle className="h-5 w-5 text-amber-700 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                <p className="text-amber-800 dark:text-amber-300">
+                  <strong>חשוב:</strong> יש להעלות <strong>שעות לפני כתבות</strong> כדי להבטיח זיהוי נכון של עובדים והתאמה מדויקת של נתונים.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
         </motion.div>
 
         {/* Tabs */}

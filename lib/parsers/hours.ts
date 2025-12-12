@@ -29,6 +29,62 @@ function findColumnIndex(headers: string[], mappings: string[]): number {
   return -1;
 }
 
+/**
+ * Parse time string to decimal hours
+ * Supports formats: "08:27", "8:27", "15:29"
+ * Returns hours as decimal (e.g., "08:27" = 8.45)
+ */
+function parseTimeToHours(timeStr: string | undefined | null): number | null {
+  if (!timeStr) return null;
+
+  const timeString = timeStr.toString().trim();
+  if (!timeString) return null;
+
+  // Match HH:MM format
+  const match = timeString.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+
+  const hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+
+  // Validate ranges
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+
+  return hours + minutes / 60;
+}
+
+/**
+ * Calculate hours worked from entry and exit times
+ * Returns hours as decimal, or null if calculation fails
+ */
+function calculateHoursFromTimes(
+  entryTime: string | undefined | null,
+  exitTime: string | undefined | null
+): number | null {
+  const entryHours = parseTimeToHours(entryTime);
+  const exitHours = parseTimeToHours(exitTime);
+
+  if (entryHours === null || exitHours === null) {
+    return null;
+  }
+
+  let hoursWorked = exitHours - entryHours;
+
+  // Handle overnight shifts (exit time is before entry time)
+  if (hoursWorked < 0) {
+    hoursWorked += 24;
+  }
+
+  // Sanity check: worked hours should be reasonable (0-24)
+  if (hoursWorked < 0 || hoursWorked > 24) {
+    return null;
+  }
+
+  return hoursWorked;
+}
+
 export interface ParseHoursResult {
   rows: ParsedHoursRow[];
   errors: string[];
@@ -89,8 +145,11 @@ export async function parseHoursFile(file: File): Promise<ParseHoursResult> {
     if (colIndices.date === -1) {
       errors.push('Missing column: Date (תאריך)');
     }
-    if (colIndices.hours === -1) {
-      errors.push('Missing column: Hours (שעות)');
+
+    // Hours column is optional if we have entry/exit times
+    const canCalculateHours = colIndices.entryTime !== -1 && colIndices.exitTime !== -1;
+    if (colIndices.hours === -1 && !canCalculateHours) {
+      errors.push('Missing column: Hours (שעות) or Entry/Exit times (כניסה/יציאה)');
     }
 
     if (errors.length > 0) {
@@ -126,14 +185,31 @@ export async function parseHoursFile(file: File): Promise<ParseHoursResult> {
           continue;
         }
 
-        const hours = parseNumber(row[colIndices.hours] as string | number | null | undefined);
+        // Get hours from hours column, or calculate from entry/exit times
+        let hours: number | null = null;
+
+        if (colIndices.hours !== -1) {
+          // Hours column exists - use it
+          hours = parseNumber(row[colIndices.hours] as string | number | null | undefined);
+        } else if (canCalculateHours) {
+          // No hours column - calculate from entry/exit times
+          const entryTime = row[colIndices.entryTime]?.toString();
+          const exitTime = row[colIndices.exitTime]?.toString();
+
+          hours = calculateHoursFromTimes(entryTime, exitTime);
+
+          if (hours === null && entryTime && exitTime) {
+            // Times exist but calculation failed - log warning
+            errors.push(`Row ${i + 1}: Could not calculate hours from entry time "${entryTime}" and exit time "${exitTime}"`);
+          }
+        }
 
         rows.push({
           firstName,
           lastName,
           fullName: `${firstName} ${lastName}`.trim(),
           date: formatDatabaseDate(parsedDate),
-          hours,
+          hours: hours ?? 0,
           status: colIndices.status !== -1 ? row[colIndices.status]?.toString() : undefined,
           entryTime: colIndices.entryTime !== -1 ? row[colIndices.entryTime]?.toString() : undefined,
           exitTime: colIndices.exitTime !== -1 ? row[colIndices.exitTime]?.toString() : undefined,

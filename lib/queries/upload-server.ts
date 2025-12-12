@@ -21,6 +21,7 @@ import {
   EnhancedUploadResult,
   DetailedError,
   HoursWithoutArticlesWarning,
+  ResolvedNameMap,
 } from '@/types';
 import { batchFindOrCreateEmployees, normalizeName } from '@/lib/matching/names';
 import { NAME_MATCHING_CONFIG } from '@/lib/config/matching-thresholds';
@@ -196,11 +197,14 @@ function validateArticleRow(
 /**
  * Server-side upload hours data with detailed validation and tracking
  * Uses admin client that bypasses RLS
+ *
+ * @param resolvedNameMap - Optional pre-resolved name→employee_id mapping from name resolution flow
  */
 export async function uploadHoursDataServer(
   supabase: SupabaseClient,
   rows: ParsedHoursRow[],
-  fileName: string
+  fileName: string,
+  resolvedNameMap?: ResolvedNameMap
 ): Promise<EnhancedUploadResult> {
   const startTime = Date.now();
   const result: EnhancedUploadResult = {
@@ -240,17 +244,33 @@ export async function uploadHoursDataServer(
     }
 
     // 2. EMPLOYEE MATCHING PHASE
-    const uniqueNames = [...new Set(validRows.map(r => r.fullName))].map(name => ({
-      fullName: name,
-      employeeNumber: validRows.find(r => r.fullName === name)?.employeeNumber,
-    }));
+    let employeeMap: Map<string, string>;
 
-    console.log(`[upload-server] Matching ${uniqueNames.length} unique employee names`);
+    if (resolvedNameMap) {
+      // Use pre-resolved name map (from name resolution flow)
+      console.log(`[upload-server] ✅ Using pre-resolved name map: ${Object.keys(resolvedNameMap).length} names`);
+      employeeMap = new Map(
+        Object.entries(resolvedNameMap).map(([name, data]) => [name, data.employee_id])
+      );
+      console.log(`[upload-server] Employee map created from resolved names, size: ${employeeMap.size}`);
 
-    const employeeMap = await batchFindOrCreateEmployees(uniqueNames, 'hours', supabase);
+      // Track match stats
+      result.matchStats.exactMatches = employeeMap.size;
+    } else {
+      // Fallback: Batch match employees (for backward compatibility or direct uploads without name resolution)
+      const uniqueNames = [...new Set(validRows.map(r => r.fullName))].map(name => ({
+        fullName: name,
+        employeeNumber: validRows.find(r => r.fullName === name)?.employeeNumber,
+      }));
 
-    // Track match stats
-    result.matchStats.exactMatches = employeeMap.size; // Approximation
+      console.log(`[upload-server] ⚠️ No resolved name map provided, running batch matching for ${uniqueNames.length} names`);
+      employeeMap = await batchFindOrCreateEmployees(uniqueNames, 'hours', supabase);
+
+      // Track match stats
+      result.matchStats.exactMatches = employeeMap.size; // Approximation
+    }
+
+    console.log(`[upload-server] 📊 Employee map ready: ${employeeMap.size} mappings available`);
 
     // 3. PREPARE RECORDS
     const records: Array<{
@@ -267,6 +287,7 @@ export async function uploadHoursDataServer(
       const employeeId = employeeMap.get(row.fullName);
 
       if (!employeeId) {
+        console.warn(`[upload-server] ⚠️ Skipping row ${rows.indexOf(row) + 1}: No employee_id found for "${row.fullName}"`);
         result.detailedErrors.push({
           row: rows.indexOf(row) + 1,
           field: 'fullName',
@@ -292,11 +313,45 @@ export async function uploadHoursDataServer(
       });
     }
 
-    console.log(`[upload-server] Prepared ${records.length} records for upsert`);
+    console.log(`[upload-server] Prepared ${records.length} records (before deduplication)`);
+
+    // 3.5. DEDUPLICATE AND AGGREGATE RECORDS
+    // Group by employee_id + date and sum hours (handles multiple entries per day)
+    const aggregatedMap = new Map<string, typeof records[0]>();
+
+    for (const record of records) {
+      const key = `${record.employee_id}:${record.date}`;
+      const existing = aggregatedMap.get(key);
+
+      if (existing) {
+        // Aggregate: sum hours, keep earliest entry and latest exit
+        existing.hours += record.hours;
+        if (record.entry_time && (!existing.entry_time || record.entry_time < existing.entry_time)) {
+          existing.entry_time = record.entry_time;
+        }
+        if (record.exit_time && (!existing.exit_time || record.exit_time > existing.exit_time)) {
+          existing.exit_time = record.exit_time;
+        }
+        existing.updated_at = record.updated_at;
+      } else {
+        aggregatedMap.set(key, { ...record });
+      }
+    }
+
+    const deduplicatedRecords = Array.from(aggregatedMap.values());
+    const duplicatesRemoved = records.length - deduplicatedRecords.length;
+
+    console.log(`[upload-server] After deduplication: ${deduplicatedRecords.length} records (removed ${duplicatesRemoved} duplicates)`);
+    if (deduplicatedRecords.length > 0) {
+      console.log(`[upload-server] Sample record:`, JSON.stringify(deduplicatedRecords[0], null, 2));
+    }
+
+    // Use deduplicated records from now on
+    const finalRecords = deduplicatedRecords;
 
     // 4. CHECK EXISTING RECORDS
     const existingMap = new Map<string, boolean>();
-    const employeeIds = [...new Set(records.map(r => r.employee_id))];
+    const employeeIds = [...new Set(finalRecords.map(r => r.employee_id))];
     const FETCH_CHUNK_SIZE = 1000;
 
     for (let i = 0; i < employeeIds.length; i += FETCH_CHUNK_SIZE) {
@@ -315,10 +370,10 @@ export async function uploadHoursDataServer(
 
     // 5. BATCH UPSERT
     const BATCH_SIZE = 500;
-    const totalBatches = Math.ceil(records.length / BATCH_SIZE);
+    const totalBatches = Math.ceil(finalRecords.length / BATCH_SIZE);
 
-    for (let i = 0; i < records.length; i += BATCH_SIZE) {
-      const batch = records.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < finalRecords.length; i += BATCH_SIZE) {
+      const batch = finalRecords.slice(i, i + BATCH_SIZE);
       const batchNum = Math.floor(i / BATCH_SIZE) + 1;
 
       console.log(`[upload-server] Upserting batch ${batchNum}/${totalBatches}`);
@@ -331,6 +386,7 @@ export async function uploadHoursDataServer(
         });
 
       if (error) {
+        console.error(`[upload-server] ❌ Batch ${batchNum} upsert error:`, error);
         result.errors.push(`שגיאה באצווה ${batchNum}: ${error.message}`);
       } else {
         for (const record of batch) {
@@ -343,6 +399,26 @@ export async function uploadHoursDataServer(
           }
         }
       }
+    }
+
+    // 5.5. VERIFICATION - Confirm records actually in database
+    const employeeIdsToVerify = [...new Set(finalRecords.map(r => r.employee_id))];
+    const datesToVerify = [...new Set(finalRecords.map(r => r.date))];
+    const { count: actualCount, error: countError } = await supabase
+      .from('daily_hours')
+      .select('*', { count: 'exact', head: true })
+      .in('employee_id', employeeIdsToVerify)
+      .in('date', datesToVerify);
+
+    if (!countError && actualCount !== null) {
+      const expectedCount = result.inserted + result.updated;
+      console.log(`[upload-server] VERIFICATION: ${actualCount} daily_hours records verified in database (expected: ${expectedCount})`);
+      if (actualCount < expectedCount) {
+        console.warn(`[upload-server] ⚠️ VERIFICATION WARNING: Expected ${expectedCount} but found ${actualCount} daily_hours records`);
+        result.errors.push(`אימות: צפויות ${expectedCount} רשומות שעות אך נמצאו ${actualCount}`);
+      }
+    } else if (countError) {
+      console.error(`[upload-server] VERIFICATION ERROR: ${countError.message}`);
     }
 
     // 6. LOG IMPORT
@@ -437,11 +513,14 @@ export async function uploadHoursDataServer(
 /**
  * Server-side upload articles data with detailed validation and tracking
  * Uses admin client that bypasses RLS
+ *
+ * @param resolvedNameMap - Optional pre-resolved name→employee_id mapping from name resolution flow
  */
 export async function uploadArticlesDataServer(
   supabase: SupabaseClient,
   rows: ParsedArticleRow[],
-  fileName: string
+  fileName: string,
+  resolvedNameMap?: ResolvedNameMap
 ): Promise<EnhancedUploadResult> {
   const startTime = Date.now();
   const result: EnhancedUploadResult = {
@@ -481,15 +560,32 @@ export async function uploadArticlesDataServer(
     }
 
     // 2. EMPLOYEE MATCHING PHASE
-    const uniqueNames = [...new Set(validRows.map(r => r.fullName))].map(name => ({
-      fullName: name,
-    }));
+    let employeeMap: Map<string, string>;
 
-    console.log(`[upload-server] Matching ${uniqueNames.length} unique employee names`);
+    if (resolvedNameMap) {
+      // Use pre-resolved name map (from name resolution flow)
+      console.log(`[upload-server] ✅ Using pre-resolved name map for articles: ${Object.keys(resolvedNameMap).length} names`);
+      employeeMap = new Map(
+        Object.entries(resolvedNameMap).map(([name, data]) => [name, data.employee_id])
+      );
+      console.log(`[upload-server] Employee map created from resolved names, size: ${employeeMap.size}`);
 
-    const employeeMap = await batchFindOrCreateEmployees(uniqueNames, 'articles', supabase);
+      // Track match stats
+      result.matchStats.exactMatches = employeeMap.size;
+    } else {
+      // Fallback: Batch match employees (for backward compatibility or direct uploads without name resolution)
+      const uniqueNames = [...new Set(validRows.map(r => r.fullName))].map(name => ({
+        fullName: name,
+      }));
 
-    result.matchStats.exactMatches = employeeMap.size;
+      console.log(`[upload-server] ⚠️ No resolved name map provided for articles, running batch matching for ${uniqueNames.length} names`);
+      employeeMap = await batchFindOrCreateEmployees(uniqueNames, 'articles', supabase);
+
+      // Track match stats
+      result.matchStats.exactMatches = employeeMap.size;
+    }
+
+    console.log(`[upload-server] 📊 Employee map ready for articles: ${employeeMap.size} mappings available`);
 
     // 3. CHECK EXISTING ARTICLES AND GET THEIR VIEW COUNTS
     // PRD REQUIREMENT: Keep MAX(old_views, new_views) for cumulative tracking
@@ -506,6 +602,7 @@ export async function uploadArticlesDataServer(
     console.log(`[upload-server] Found ${existingViewsMap.size} existing articles`);
 
     // 4. PREPARE RECORDS WITH MAX VIEWS LOGIC
+    const unmatchedAuthors = new Set<string>();
     const records = validRows.map(row => {
       const existingViews = existingViewsMap.get(row.articleId);
       // PRD BUSINESS LOGIC: Keep highest view count (cumulative maximum)
@@ -513,9 +610,14 @@ export async function uploadArticlesDataServer(
         ? Math.max(existingViews, row.views)
         : row.views;
 
+      const employeeId = employeeMap.get(row.fullName);
+      if (!employeeId) {
+        unmatchedAuthors.add(row.fullName);
+      }
+
       return {
         article_id: row.articleId,
-        employee_id: employeeMap.get(row.fullName) || null,
+        employee_id: employeeId || null,
         title: row.title,
         views: finalViews, // MAX(old_views, new_views)
         published_at: row.publishedAt,
@@ -523,6 +625,12 @@ export async function uploadArticlesDataServer(
         updated_at: new Date().toISOString(),
       };
     });
+
+    // Track unmatched authors as warnings (not errors - articles still inserted with null employee_id)
+    if (unmatchedAuthors.size > 0) {
+      console.warn(`[upload-server] ⚠️ ${unmatchedAuthors.size} authors not matched to employees: ${[...unmatchedAuthors].join(', ')}`);
+      result.errors.push(`${unmatchedAuthors.size} כותבים לא הותאמו לעובדים: ${[...unmatchedAuthors].join(', ')}`);
+    }
 
     // Count low-view articles for result
     result.ignoredLowViewArticles = records.filter(r => r.is_low_views).length;
@@ -558,7 +666,25 @@ export async function uploadArticlesDataServer(
       }
     }
 
-    // 6. LOG IMPORT
+    // 6. VERIFICATION - Confirm records actually in database
+    const articleIdsToVerify = records.map(r => r.article_id);
+    const { count: actualCount, error: countError } = await supabase
+      .from('articles')
+      .select('*', { count: 'exact', head: true })
+      .in('article_id', articleIdsToVerify);
+
+    if (!countError && actualCount !== null) {
+      const expectedCount = result.inserted + result.updated;
+      console.log(`[upload-server] VERIFICATION: ${actualCount} articles verified in database (expected: ${expectedCount})`);
+      if (actualCount < expectedCount) {
+        console.warn(`[upload-server] ⚠️ VERIFICATION WARNING: Expected ${expectedCount} but found ${actualCount} articles`);
+        result.errors.push(`אימות: צפויות ${expectedCount} כתבות אך נמצאו ${actualCount}`);
+      }
+    } else if (countError) {
+      console.error(`[upload-server] VERIFICATION ERROR: ${countError.message}`);
+    }
+
+    // 7. LOG IMPORT
     const { error: logError } = await supabase.from('import_logs').insert({
       file_type: 'articles',
       file_name: fileName,

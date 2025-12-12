@@ -250,6 +250,8 @@ export interface QueryFilters {
   startDate?: string; // YYYY-MM-DD
   endDate?: string;   // YYYY-MM-DD
   employeeIds?: string[];
+  shift?: 'all' | 'morning' | 'evening'; // NEW: Shift filtering (applies to articles only)
+  excludeSabbath?: boolean; // NEW: Exclude Saturday data (default: false)
 }
 
 /**
@@ -407,4 +409,71 @@ export interface DeleteDataResult {
   deletedArticles: number;
   errors: string[];
   processingTimeMs: number;
+}
+
+// ============================================================================
+// DASHBOARD & EMPLOYEE ANALYTICS TYPES (PRD Requirements)
+// ============================================================================
+
+/**
+ * Dashboard KPIs for macro view
+ * Shows aggregated metrics across all employees
+ */
+export interface DashboardKPIs {
+  total_views: number;           // Sum of views from articles >= 50 views
+  total_articles: number;        // Count of articles >= 50 views
+  total_hours: number;           // Sum of all hours in date range
+  avg_efficiency: number;        // total_views / total_hours (rounded UP)
+  avg_pace: number;              // total_articles / total_hours (2 decimals)
+  top_articles: TopArticle[];    // Top N articles by views
+}
+
+/**
+ * Employee efficiency row for the rankings table
+ * Includes performance flags for highlighting issues
+ */
+export interface EmployeeEfficiency {
+  employee_id: string;
+  employee_name: string;
+  article_count: number;         // Count of articles in date range
+  total_views: number;           // Sum of views from articles
+  total_hours: number;           // Sum of hours in date range
+  pace: number | null;           // articles / hours (2 decimals)
+  efficiency: number | null;     // views / hours (rounded)
+
+  // Performance flags
+  missing_hours_with_articles: boolean;  // Has articles on days with no hours
+  no_hours: boolean;                      // Has 0 hours in range
+  high_pace: boolean;                     // Pace > 2.0 articles/hour
+}
+
+/**
+ * Time resolution for employee trends
+ */
+export type TimeResolution = 'daily' | 'weekly' | 'monthly' | 'yearly';
+
+/**
+ * Single data point in employee trend time series
+ */
+export interface EmployeeTrendPoint {
+  bucket: string;                // Date bucket (e.g., "2024-01", "2024-W01", "2024-01-15")
+  hours: number;                 // Total hours in bucket
+  article_count: number;         // Total articles in bucket
+  total_views: number;           // Total views in bucket
+  pace: number | null;           // articles / hours
+  efficiency: number | null;     // views / hours
+}
+
+/**
+ * Employee trends response with optional period comparison
+ */
+export interface EmployeeTrends {
+  employee_id: string;
+  employee_name: string;
+  resolution: TimeResolution;
+  data: EmployeeTrendPoint[];
+  comparison?: {
+    period_a: EmployeeTrendPoint[];  // Current period
+    period_b: EmployeeTrendPoint[];  // Previous period
+  };
 }

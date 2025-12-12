@@ -93,9 +93,19 @@ export function ArticlesUploader() {
         setShowNameResolution(true);
         setIsUploading(false);
       } else {
-        // No conflicts - proceed directly to upload
+        // No conflicts - build name map from auto-matched and proceed to upload
         toast.success('כל השמות זוהו אוטומטית!');
-        await proceedToUpload(analysis, null);
+
+        // Build name map from auto-matched names
+        const autoMatchedMap: ResolvedNameMap = {};
+        analysis.autoMatched.forEach((match) => {
+          autoMatchedMap[match.inputName] = {
+            employee_id: match.employee_id,
+            confirmed_by_user: false, // Auto-matched, not user confirmed
+          };
+        });
+
+        await proceedToUpload(analysis, autoMatchedMap);
       }
     } catch (error) {
       toast.error('שגיאה בניתוח שמות');
@@ -109,6 +119,9 @@ export function ArticlesUploader() {
    * Creates employees and aliases based on user choices
    */
   const handleNameResolutionComplete = async (resolutions: NameResolution[]) => {
+    console.log('[ArticlesUploader] ✅ handleNameResolutionComplete called');
+    console.log('[ArticlesUploader] Received resolutions:', resolutions);
+
     if (!nameAnalysis) return;
 
     setShowNameResolution(false);
@@ -119,6 +132,7 @@ export function ArticlesUploader() {
       toast.info('שומר החלטות זיהוי...');
 
       // Execute name resolutions
+      console.log('[ArticlesUploader] 📤 Sending POST to /api/upload/execute-resolutions');
       const response = await fetch('/api/upload/execute-resolutions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -128,6 +142,8 @@ export function ArticlesUploader() {
           source: 'articles',
         }),
       });
+
+      console.log('[ArticlesUploader] 📥 Response received:', response.status);
 
       if (!response.ok) {
         const errorData = await response.json();

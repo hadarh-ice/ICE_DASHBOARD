@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { uploadArticlesDataServer } from '@/lib/queries/upload-server';
-import { ParsedArticleRow } from '@/types';
+import { ParsedArticleRow, ResolvedNameMap } from '@/types';
 
 export async function POST(request: NextRequest) {
   try {
     // Parse request body
     const body = await request.json();
-    const { rows, fileName } = body as { rows: ParsedArticleRow[]; fileName: string };
+    const { rows, fileName, nameMapping: resolvedNameMap } = body as {
+      rows: ParsedArticleRow[];
+      fileName: string;
+      nameMapping?: ResolvedNameMap;
+    };
 
     // Validate input
     if (!rows || !Array.isArray(rows)) {
@@ -24,13 +28,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log(`[API /upload/articles] Received ${rows.length} rows from ${fileName || 'unknown'}`);
+    console.log(`[API /upload/articles] Received ${rows.length} rows from ${fileName || 'unknown'}${resolvedNameMap ? ` with ${Object.keys(resolvedNameMap).length} pre-resolved names` : ''}`);
 
     // Create admin client (bypasses RLS)
     const supabase = createAdminClient();
 
-    // Upload data
-    const result = await uploadArticlesDataServer(supabase, rows, fileName || 'unknown');
+    // Upload data with resolved name mapping (if provided from name resolution flow)
+    const result = await uploadArticlesDataServer(supabase, rows, fileName || 'unknown', resolvedNameMap);
 
     console.log(`[API /upload/articles] Result: ${result.inserted} inserted, ${result.updated} updated, ${result.errors.length} errors`);
 
