@@ -128,28 +128,39 @@ function getISOWeekNumber(date: Date): number {
 export async function getGlobalMetrics(filters: QueryFilters): Promise<GlobalMetrics> {
   const supabase = createClient();
 
-  // Build articles query (exclude low-view articles)
-  let articlesQuery = supabase
+  // Build articles count query (exclude low-view articles)
+  let articlesCountQuery = supabase
     .from('articles')
-    .select('views, employee_id')
+    .select('*', { count: 'exact', head: true })
+    .eq('is_low_views', false);
+
+  // Build articles views query (exclude low-view articles)
+  let articlesViewsQuery = supabase
+    .from('articles')
+    .select('views')
     .eq('is_low_views', false);
 
   if (filters.startDate) {
-    articlesQuery = articlesQuery.gte('published_at', filters.startDate);
+    articlesCountQuery = articlesCountQuery.gte('published_at', filters.startDate);
+    articlesViewsQuery = articlesViewsQuery.gte('published_at', filters.startDate);
   }
   if (filters.endDate) {
-    articlesQuery = articlesQuery.lte('published_at', filters.endDate + 'T23:59:59');
+    articlesCountQuery = articlesCountQuery.lte('published_at', filters.endDate + 'T23:59:59');
+    articlesViewsQuery = articlesViewsQuery.lte('published_at', filters.endDate + 'T23:59:59');
   }
   if (filters.employeeIds && filters.employeeIds.length > 0) {
-    articlesQuery = articlesQuery.in('employee_id', filters.employeeIds);
+    articlesCountQuery = articlesCountQuery.in('employee_id', filters.employeeIds);
+    articlesViewsQuery = articlesViewsQuery.in('employee_id', filters.employeeIds);
   }
 
-  const { data: articles } = await articlesQuery;
+  const { count: totalArticles } = await articlesCountQuery;
+  const { data: articleViews } = await articlesViewsQuery.limit(100000);
 
   // Build hours query
   let hoursQuery = supabase
     .from('daily_hours')
-    .select('hours, employee_id');
+    .select('hours, employee_id')
+    .limit(100000);
 
   if (filters.startDate) {
     hoursQuery = hoursQuery.gte('date', filters.startDate);
@@ -163,15 +174,14 @@ export async function getGlobalMetrics(filters: QueryFilters): Promise<GlobalMet
 
   const { data: hours } = await hoursQuery;
 
-  const totalArticles = articles?.length || 0;
-  const totalViews = articles?.reduce((sum, a) => sum + (a.views || 0), 0) || 0;
+  const totalViews = articleViews?.reduce((sum, a) => sum + (a.views || 0), 0) || 0;
   const totalHours = hours?.reduce((sum, h) => sum + (Number(h.hours) || 0), 0) || 0;
 
   return {
-    total_articles: totalArticles,
+    total_articles: totalArticles || 0,
     total_views: totalViews,
     total_hours: totalHours,
-    avg_rate: safeDivide(totalArticles, totalHours),
+    avg_rate: safeDivide(totalArticles || 0, totalHours),
     avg_efficiency: safeDivide(totalViews, totalHours),
   };
 }
