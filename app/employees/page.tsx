@@ -8,6 +8,8 @@ import { AppShell } from '@/components/layout/AppShell';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { FilterBar } from '@/components/filters/FilterBar';
+import { FilterSheet, FilterTrigger } from '@/components/filters/FilterSheet';
 import { useEmployees } from '@/hooks/useEmployees';
 import { useEmployeeMetrics } from '@/hooks/useMetrics';
 import { useFilterStore } from '@/stores/filters';
@@ -31,12 +33,20 @@ export default function EmployeesPage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [showFilterSheet, setShowFilterSheet] = useState(false);
 
-  const { dateRange } = useFilterStore();
+  const {
+    dateRange,
+    selectedEmployees,
+    setDateRange,
+    setSelectedEmployees,
+    clearFilters,
+  } = useFilterStore();
+
   const { data: employees = [], isLoading: isLoadingEmployees } = useEmployees();
   const { data: employeeMetrics = [], isLoading: isLoadingMetrics } = useEmployeeMetrics({
     dateRange,
-    employeeIds: [],
+    employeeIds: selectedEmployees,
   });
 
   useEffect(() => {
@@ -88,6 +98,8 @@ export default function EmployeesPage() {
     );
   }
 
+  const hasActiveFilters = !!dateRange?.from || selectedEmployees.length > 0;
+
   return (
     <AppShell>
       <motion.div
@@ -102,6 +114,28 @@ export default function EmployeesPage() {
           <p className="text-sm text-muted-foreground mt-1">
             ניהול וצפייה בנתוני העובדים
           </p>
+        </motion.div>
+
+        {/* Filter Bar - Desktop Only */}
+        <motion.div variants={listItemVariants} className="hidden md:block -mx-4 md:-mx-6">
+          <FilterBar
+            employees={employees}
+            dateRange={dateRange}
+            selectedEmployees={selectedEmployees}
+            onDateRangeChange={setDateRange}
+            onEmployeesChange={setSelectedEmployees}
+            onReset={clearFilters}
+          />
+        </motion.div>
+
+        {/* Filter Trigger - Mobile */}
+        <motion.div variants={listItemVariants} className="md:hidden">
+          <FilterTrigger
+            onClick={() => setShowFilterSheet(true)}
+            hasActiveFilters={hasActiveFilters}
+            dateRange={dateRange}
+            employeeCount={selectedEmployees.length}
+          />
         </motion.div>
 
         {/* Stats Summary */}
@@ -222,6 +256,18 @@ export default function EmployeesPage() {
           )}
         </motion.div>
       </motion.div>
+
+      {/* Filter Sheet Modal */}
+      <FilterSheet
+        isOpen={showFilterSheet}
+        onClose={() => setShowFilterSheet(false)}
+        employees={employees}
+        dateRange={dateRange}
+        selectedEmployees={selectedEmployees}
+        onDateRangeChange={setDateRange}
+        onEmployeesChange={setSelectedEmployees}
+        onReset={clearFilters}
+      />
     </AppShell>
   );
 }

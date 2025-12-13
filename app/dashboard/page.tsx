@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 import { AppShell } from '@/components/layout/AppShell';
 import { Navbar } from '@/components/layout/Navbar';
 import { FilterSheet, FilterTrigger } from '@/components/filters/FilterSheet';
+import { FilterBar } from '@/components/filters/FilterBar';
 import { KPIGrid } from '@/components/dashboard/KPIGrid';
 import { TopArticlesTable } from '@/components/dashboard/TopArticlesTable';
 import { EmployeeRankingsTable } from '@/components/dashboard/EmployeeRankingsTable';
@@ -101,6 +102,18 @@ export default function DashboardPage() {
               סקירה כללית של ביצועי הצוות
             </p>
           </div>
+        </motion.div>
+
+        {/* Filter Bar - Desktop Only */}
+        <motion.div variants={listItemVariants} className="hidden md:block -mx-4 md:-mx-6">
+          <FilterBar
+            employees={employees}
+            dateRange={dateRange}
+            selectedEmployees={selectedEmployees}
+            onDateRangeChange={setDateRange}
+            onEmployeesChange={setSelectedEmployees}
+            onReset={clearFilters}
+          />
         </motion.div>
 
         {/* Filter Trigger - Mobile */}
