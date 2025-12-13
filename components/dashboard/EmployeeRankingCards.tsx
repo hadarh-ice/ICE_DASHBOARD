@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { EmployeeMetrics } from '@/types';
 import { formatNumber } from '@/lib/utils/numbers';
-import { ChevronDown, ChevronUp, Users, Eye, Zap } from 'lucide-react';
+import { ChevronDown, ChevronUp, Users, Eye, Zap, FileText, Clock, TrendingUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface EmployeeRankingCardsProps {
@@ -91,7 +91,7 @@ export function EmployeeRankingCards({
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.03 }}
                 className={cn(
-                  'flex items-center gap-3 px-4 py-3.5',
+                  'flex items-start gap-3 px-4 py-4',
                   'transition-colors duration-150',
                   'active:bg-gray-50 dark:active:bg-gray-800/50'
                 )}
@@ -111,21 +111,64 @@ export function EmployeeRankingCards({
 
                 {/* Employee Info */}
                 <div className="flex-1 min-w-0">
-                  <p className="text-[15px] font-medium text-gray-900 dark:text-white truncate">
+                  <p className="text-[15px] font-medium text-gray-900 dark:text-white truncate mb-2">
                     {employee.employee_name}
                   </p>
-                  <div className="flex items-center gap-3 mt-0.5">
+
+                  {/* All Metrics Grid */}
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                    {/* Articles */}
+                    <div className="flex items-center gap-1.5">
+                      <FileText className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />
+                      <span className="text-[13px] text-gray-600 dark:text-gray-300">
+                        {formatNumber(employee.total_articles)} כתבות
+                      </span>
+                    </div>
+
                     {/* Views */}
-                    <span className="text-[12px] text-gray-400 flex items-center gap-1">
-                      <Eye className="h-3 w-3" />
-                      {formatNumber(employee.total_views)} צפיות
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <Eye className="h-3.5 w-3.5 text-green-500 flex-shrink-0" />
+                      <span className="text-[13px] text-gray-600 dark:text-gray-300">
+                        {formatNumber(employee.total_views)} צפיות
+                      </span>
+                    </div>
+
+                    {/* Hours */}
+                    <div className="flex items-center gap-1.5">
+                      <Clock className="h-3.5 w-3.5 text-amber-500 flex-shrink-0" />
+                      <span className="text-[13px] text-gray-600 dark:text-gray-300">
+                        {formatNumber(employee.total_hours)} שעות
+                      </span>
+                    </div>
+
+                    {/* Views per Article */}
+                    {employee.avg_views_per_article !== null && (
+                      <div className="flex items-center gap-1.5">
+                        <Eye className="h-3.5 w-3.5 text-purple-500 flex-shrink-0" />
+                        <span className="text-[13px] text-gray-600 dark:text-gray-300">
+                          {formatNumber(employee.avg_views_per_article)} צפ׳/כתבה
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Pace/Rate */}
+                    {employee.rate_articles_per_hour !== null && (
+                      <div className="flex items-center gap-1.5">
+                        <TrendingUp className="h-3.5 w-3.5 text-indigo-500 flex-shrink-0" />
+                        <span className="text-[13px] text-gray-600 dark:text-gray-300">
+                          {employee.rate_articles_per_hour.toFixed(2)} קצב
+                        </span>
+                      </div>
+                    )}
+
                     {/* Efficiency */}
                     {employee.efficiency_views_per_hour !== null && (
-                      <span className="text-[12px] text-gray-400 flex items-center gap-1">
-                        <Zap className="h-3 w-3" />
-                        {formatNumber(employee.efficiency_views_per_hour)}/שעה
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <Zap className="h-3.5 w-3.5 text-orange-500 flex-shrink-0" />
+                        <span className="text-[13px] font-medium text-gray-700 dark:text-gray-200">
+                          {formatNumber(employee.efficiency_views_per_hour)} יעילות
+                        </span>
+                      </div>
                     )}
                   </div>
                 </div>
