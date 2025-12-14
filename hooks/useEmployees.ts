@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { getAllEmployees } from '@/lib/queries/metrics';
-import type { QueryFilters } from '@/lib/queries/metrics';
+import type { QueryFilters } from '@/types';
 
 export function useEmployees(filters?: Pick<QueryFilters, 'startDate' | 'endDate'>) {
   return useQuery({
