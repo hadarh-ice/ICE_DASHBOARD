@@ -43,7 +43,10 @@ export default function EmployeesPage() {
     clearFilters,
   } = useFilterStore();
 
-  const { data: employees = [], isLoading: isLoadingEmployees } = useEmployees();
+  const { data: employees = [], isLoading: isLoadingEmployees } = useEmployees({
+    startDate: dateRange?.from ? dateRange.from.toISOString().split('T')[0] : undefined,
+    endDate: dateRange?.to ? dateRange.to.toISOString().split('T')[0] : undefined,
+  });
   const { data: employeeMetrics = [], isLoading: isLoadingMetrics } = useEmployeeMetrics({
     dateRange,
     employeeIds: selectedEmployees,

@@ -128,39 +128,70 @@ function getISOWeekNumber(date: Date): number {
 export async function getGlobalMetrics(filters: QueryFilters): Promise<GlobalMetrics> {
   const supabase = createClient();
 
-  // Build articles count query (exclude low-view articles)
-  let articlesCountQuery = supabase
-    .from('articles')
-    .select('*', { count: 'exact', head: true })
-    .eq('is_low_views', false);
+  // Use server-side RPC function for accurate aggregation (fixes 1,000 row limit bug)
+  const { data: metricsData, error: rpcError } = await supabase.rpc('get_global_metrics', {
+    p_start_date: filters.startDate || null,
+    p_end_date: filters.endDate || null,
+    p_employee_ids: filters.employeeIds && filters.employeeIds.length > 0 ? filters.employeeIds : null,
+  });
 
-  // Build articles views query (exclude low-view articles)
-  let articlesViewsQuery = supabase
+  if (rpcError || !metricsData || metricsData.length === 0) {
+    return {
+      total_articles: 0,
+      total_views: 0,
+      total_hours: 0,
+      avg_rate: null,
+      avg_efficiency: null,
+    };
+  }
+
+  const { total_articles, total_views } = metricsData[0];
+
+  // If no articles found, return zeros
+  if (total_articles === 0) {
+    return {
+      total_articles: 0,
+      total_views: 0,
+      total_hours: 0,
+      avg_rate: null,
+      avg_efficiency: null,
+    };
+  }
+
+  // Get employee IDs who have articles in this date range for hours calculation
+  let employeeIdsQuery = supabase
     .from('articles')
-    .select('views')
+    .select('employee_id')
     .eq('is_low_views', false);
 
   if (filters.startDate) {
-    articlesCountQuery = articlesCountQuery.gte('published_at', filters.startDate);
-    articlesViewsQuery = articlesViewsQuery.gte('published_at', filters.startDate);
+    employeeIdsQuery = employeeIdsQuery.gte('published_at', filters.startDate);
   }
   if (filters.endDate) {
-    articlesCountQuery = articlesCountQuery.lte('published_at', filters.endDate + 'T23:59:59');
-    articlesViewsQuery = articlesViewsQuery.lte('published_at', filters.endDate + 'T23:59:59');
+    employeeIdsQuery = employeeIdsQuery.lte('published_at', filters.endDate + 'T23:59:59');
   }
   if (filters.employeeIds && filters.employeeIds.length > 0) {
-    articlesCountQuery = articlesCountQuery.in('employee_id', filters.employeeIds);
-    articlesViewsQuery = articlesViewsQuery.in('employee_id', filters.employeeIds);
+    employeeIdsQuery = employeeIdsQuery.in('employee_id', filters.employeeIds);
   }
 
-  const { count: totalArticles } = await articlesCountQuery;
-  const { data: articleViews } = await articlesViewsQuery.limit(100000);
+  const { data: employeeArticles } = await employeeIdsQuery;
+  const employeeIdsWithArticles = [...new Set(employeeArticles?.map(a => a.employee_id) || [])];
 
-  // Build hours query
+  if (employeeIdsWithArticles.length === 0) {
+    return {
+      total_articles: Number(total_articles),
+      total_views: Number(total_views),
+      total_hours: 0,
+      avg_rate: null,
+      avg_efficiency: null,
+    };
+  }
+
+  // Build hours query - only for employees who have articles
   let hoursQuery = supabase
     .from('daily_hours')
-    .select('hours, employee_id')
-    .limit(100000);
+    .select('hours')
+    .in('employee_id', employeeIdsWithArticles);
 
   if (filters.startDate) {
     hoursQuery = hoursQuery.gte('date', filters.startDate);
@@ -168,21 +199,16 @@ export async function getGlobalMetrics(filters: QueryFilters): Promise<GlobalMet
   if (filters.endDate) {
     hoursQuery = hoursQuery.lte('date', filters.endDate);
   }
-  if (filters.employeeIds && filters.employeeIds.length > 0) {
-    hoursQuery = hoursQuery.in('employee_id', filters.employeeIds);
-  }
 
   const { data: hours } = await hoursQuery;
-
-  const totalViews = articleViews?.reduce((sum, a) => sum + (a.views || 0), 0) || 0;
   const totalHours = hours?.reduce((sum, h) => sum + (Number(h.hours) || 0), 0) || 0;
 
   return {
-    total_articles: totalArticles || 0,
-    total_views: totalViews,
+    total_articles: Number(total_articles),
+    total_views: Number(total_views),
     total_hours: totalHours,
-    avg_rate: safeDivide(totalArticles || 0, totalHours),
-    avg_efficiency: safeDivide(totalViews, totalHours),
+    avg_rate: safeDivide(Number(total_articles), totalHours),
+    avg_efficiency: safeDivide(Number(total_views), totalHours),
   };
 }
 
@@ -192,30 +218,13 @@ export async function getGlobalMetrics(filters: QueryFilters): Promise<GlobalMet
 export async function getEmployeeMetrics(filters: QueryFilters): Promise<EmployeeMetrics[]> {
   const supabase = createClient();
 
-  // Get employees
-  let employeesQuery = supabase
-    .from('employees')
-    .select('id, canonical_name');
-
-  if (filters.employeeIds && filters.employeeIds.length > 0) {
-    employeesQuery = employeesQuery.in('id', filters.employeeIds);
-  }
-
-  const { data: employees } = await employeesQuery;
-
-  if (!employees || employees.length === 0) {
-    return [];
-  }
-
-  const employeeIds = employees.map(e => e.id);
-
-  // Get articles (exclude low-view articles)
+  // Start with articles as the source of truth - only include employees with valid articles
   let articlesQuery = supabase
     .from('articles')
     .select('employee_id, views')
-    .in('employee_id', employeeIds)
     .eq('is_low_views', false);
 
+  // Apply date filters to articles
   if (filters.startDate) {
     articlesQuery = articlesQuery.gte('published_at', filters.startDate);
   }
@@ -223,9 +232,31 @@ export async function getEmployeeMetrics(filters: QueryFilters): Promise<Employe
     articlesQuery = articlesQuery.lte('published_at', filters.endDate + 'T23:59:59');
   }
 
+  // Apply employee filter if provided
+  if (filters.employeeIds && filters.employeeIds.length > 0) {
+    articlesQuery = articlesQuery.in('employee_id', filters.employeeIds);
+  }
+
   const { data: articles } = await articlesQuery;
 
-  // Get hours
+  if (!articles || articles.length === 0) {
+    return [];
+  }
+
+  // Get unique employee IDs from articles - these are the ONLY employees who should appear
+  const employeeIds = [...new Set(articles.map(a => a.employee_id))];
+
+  // Get employee details for these IDs
+  const { data: employees } = await supabase
+    .from('employees')
+    .select('id, canonical_name')
+    .in('id', employeeIds);
+
+  if (!employees || employees.length === 0) {
+    return [];
+  }
+
+  // Get hours for these employees
   let hoursQuery = supabase
     .from('daily_hours')
     .select('employee_id, hours')
@@ -240,9 +271,9 @@ export async function getEmployeeMetrics(filters: QueryFilters): Promise<Employe
 
   const { data: hours } = await hoursQuery;
 
-  // Aggregate by employee
+  // Aggregate by employee - only process employees who have articles
   const metrics: EmployeeMetrics[] = employees.map(employee => {
-    const empArticles = articles?.filter(a => a.employee_id === employee.id) || [];
+    const empArticles = articles.filter(a => a.employee_id === employee.id);
     const empHours = hours?.filter(h => h.employee_id === employee.id) || [];
 
     const totalArticles = empArticles.length;
@@ -319,16 +350,44 @@ export async function getTopArticles(
 
 /**
  * Get all employees for filter dropdown
+ * Returns only employees who have at least one article with views >= 50
+ * If date filters are provided, only includes employees with articles in that range
+ * Otherwise, returns employees with any valid article ever
  */
-export async function getAllEmployees(): Promise<Array<{ id: string; name: string }>> {
+export async function getAllEmployees(filters?: QueryFilters): Promise<Array<{ id: string; name: string }>> {
   const supabase = createClient();
 
-  const { data } = await supabase
+  // Build query to get distinct employee IDs from articles with views >= 50
+  let articlesQuery = supabase
+    .from('articles')
+    .select('employee_id')
+    .eq('is_low_views', false);
+
+  // Apply date filters if provided
+  if (filters?.startDate) {
+    articlesQuery = articlesQuery.gte('published_at', filters.startDate);
+  }
+  if (filters?.endDate) {
+    articlesQuery = articlesQuery.lte('published_at', filters.endDate + 'T23:59:59');
+  }
+
+  const { data: articles } = await articlesQuery;
+
+  if (!articles || articles.length === 0) {
+    return [];
+  }
+
+  // Get unique employee IDs
+  const employeeIds = [...new Set(articles.map(a => a.employee_id))];
+
+  // Fetch employee details for these IDs
+  const { data: employees } = await supabase
     .from('employees')
     .select('id, canonical_name')
+    .in('id', employeeIds)
     .order('canonical_name');
 
-  return (data || []).map(e => ({
+  return (employees || []).map(e => ({
     id: e.id,
     name: e.canonical_name,
   }));

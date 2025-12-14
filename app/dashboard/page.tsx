@@ -35,7 +35,10 @@ export default function DashboardPage() {
     clearFilters,
   } = useFilterStore();
 
-  const { data: employees = [] } = useEmployees();
+  const { data: employees = [] } = useEmployees({
+    startDate: dateRange?.from ? dateRange.from.toISOString().split('T')[0] : undefined,
+    endDate: dateRange?.to ? dateRange.to.toISOString().split('T')[0] : undefined,
+  });
 
   const filterOptions = {
     dateRange,
