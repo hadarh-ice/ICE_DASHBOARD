@@ -133,6 +133,8 @@ export async function getGlobalMetrics(filters: QueryFilters): Promise<GlobalMet
     p_start_date: filters.startDate || null,
     p_end_date: filters.endDate || null,
     p_employee_ids: filters.employeeIds && filters.employeeIds.length > 0 ? filters.employeeIds : null,
+    p_shift: filters.shift || 'all',
+    p_exclude_sabbath: filters.excludeSabbath || false,
   });
 
   if (rpcError || !metricsData || metricsData.length === 0) {
@@ -218,33 +220,21 @@ export async function getGlobalMetrics(filters: QueryFilters): Promise<GlobalMet
 export async function getEmployeeMetrics(filters: QueryFilters): Promise<EmployeeMetrics[]> {
   const supabase = createClient();
 
-  // Start with articles as the source of truth - only include employees with valid articles
-  let articlesQuery = supabase
-    .from('articles')
-    .select('employee_id, views')
-    .eq('is_low_views', false);
+  // Use server-side RPC function for accurate per-employee aggregation (fixes KPI mutation bug)
+  const { data: employeeMetricsData, error: rpcError } = await supabase.rpc('get_employee_metrics', {
+    p_start_date: filters.startDate || null,
+    p_end_date: filters.endDate || null,
+    p_employee_ids: filters.employeeIds && filters.employeeIds.length > 0 ? filters.employeeIds : null,
+    p_shift: filters.shift || 'all',
+    p_exclude_sabbath: filters.excludeSabbath || false,
+  });
 
-  // Apply date filters to articles
-  if (filters.startDate) {
-    articlesQuery = articlesQuery.gte('published_at', filters.startDate);
-  }
-  if (filters.endDate) {
-    articlesQuery = articlesQuery.lte('published_at', filters.endDate + 'T23:59:59');
-  }
-
-  // Apply employee filter if provided
-  if (filters.employeeIds && filters.employeeIds.length > 0) {
-    articlesQuery = articlesQuery.in('employee_id', filters.employeeIds);
-  }
-
-  const { data: articles } = await articlesQuery;
-
-  if (!articles || articles.length === 0) {
+  if (rpcError || !employeeMetricsData || employeeMetricsData.length === 0) {
     return [];
   }
 
-  // Get unique employee IDs from articles - these are the ONLY employees who should appear
-  const employeeIds = [...new Set(articles.map(a => a.employee_id))];
+  // Get unique employee IDs from RPC results
+  const employeeIds = employeeMetricsData.map((m: any) => m.employee_id);
 
   // Get employee details for these IDs
   const { data: employees } = await supabase
@@ -256,10 +246,10 @@ export async function getEmployeeMetrics(filters: QueryFilters): Promise<Employe
     return [];
   }
 
-  // Get hours for these employees
+  // Get hours for these employees (apply sabbath filter on client side for now)
   let hoursQuery = supabase
     .from('daily_hours')
-    .select('employee_id, hours')
+    .select('employee_id, hours, date')
     .in('employee_id', employeeIds);
 
   if (filters.startDate) {
@@ -271,14 +261,24 @@ export async function getEmployeeMetrics(filters: QueryFilters): Promise<Employe
 
   const { data: hours } = await hoursQuery;
 
-  // Aggregate by employee - only process employees who have articles
-  const metrics: EmployeeMetrics[] = employees.map(employee => {
-    const empArticles = articles.filter(a => a.employee_id === employee.id);
-    const empHours = hours?.filter(h => h.employee_id === employee.id) || [];
+  // Apply sabbath filter to hours if needed
+  const filteredHours = filters.excludeSabbath && hours
+    ? hours.filter(h => {
+        const date = new Date(h.date);
+        return date.getDay() !== 6; // 6 = Saturday
+      })
+    : hours || [];
 
-    const totalArticles = empArticles.length;
-    const totalViews = empArticles.reduce((sum, a) => sum + (a.views || 0), 0);
+  // Aggregate by employee
+  const metrics: EmployeeMetrics[] = employeeMetricsData.map((empMetric: any): EmployeeMetrics | null => {
+    const employee = employees.find(e => e.id === empMetric.employee_id);
+    if (!employee) return null;
+
+    const empHours = filteredHours.filter(h => h.employee_id === empMetric.employee_id);
     const totalHours = empHours.reduce((sum, h) => sum + (Number(h.hours) || 0), 0);
+
+    const totalArticles = Number(empMetric.total_articles);
+    const totalViews = Number(empMetric.total_views);
 
     return {
       employee_id: employee.id,
@@ -294,7 +294,7 @@ export async function getEmployeeMetrics(filters: QueryFilters): Promise<Employe
         ? Math.round(safeDivide(totalViews, totalHours)!)
         : null,
     };
-  });
+  }).filter((m: EmployeeMetrics | null): m is EmployeeMetrics => m !== null);
 
   // Sort by efficiency (descending), nulls last
   return metrics.sort((a, b) => {
@@ -955,29 +955,29 @@ export async function getDashboardKPIs(
 ): Promise<DashboardKPIs> {
   const supabase = createClient();
 
-  // Fetch articles (exclude low-view articles)
-  let articlesQuery = supabase
-    .from('articles')
-    .select('views, employee_id, published_at')
-    .eq('is_low_views', false);
+  // Use server-side RPC function for accurate article aggregation (fixes KPI mutation bug)
+  const { data: metricsData, error: rpcError } = await supabase.rpc('get_global_metrics', {
+    p_start_date: filters.startDate || null,
+    p_end_date: filters.endDate || null,
+    p_employee_ids: filters.employeeIds && filters.employeeIds.length > 0 ? filters.employeeIds : null,
+    p_shift: filters.shift || 'all',
+    p_exclude_sabbath: filters.excludeSabbath || false,
+  });
 
-  if (filters.startDate) {
-    articlesQuery = articlesQuery.gte('published_at', filters.startDate);
+  if (rpcError || !metricsData || metricsData.length === 0) {
+    return {
+      total_views: 0,
+      total_articles: 0,
+      total_hours: 0,
+      avg_efficiency: 0,
+      avg_pace: 0,
+      top_articles: [],
+    };
   }
-  if (filters.endDate) {
-    articlesQuery = articlesQuery.lte('published_at', filters.endDate + 'T23:59:59');
-  }
-  if (filters.employeeIds?.length) {
-    articlesQuery = articlesQuery.in('employee_id', filters.employeeIds);
-  }
 
-  const { data: articles } = await articlesQuery;
+  const { total_articles, total_views } = metricsData[0];
 
-  // Apply filters
-  let filteredArticles = filterSabbath(articles || [], filters.excludeSabbath || false);
-  filteredArticles = filterByShift(filteredArticles, filters.shift);
-
-  // Fetch hours
+  // Fetch hours (apply sabbath filter on client side for now)
   let hoursQuery = supabase
     .from('daily_hours')
     .select('hours, date, employee_id');
@@ -994,22 +994,18 @@ export async function getDashboardKPIs(
 
   const { data: hours } = await hoursQuery;
   const filteredHours = filterSabbath(hours || [], filters.excludeSabbath || false);
-
-  // Calculate totals
-  const totalArticles = filteredArticles.length;
-  const totalViews = filteredArticles.reduce((sum, a) => sum + (a.views || 0), 0);
   const totalHours = filteredHours.reduce((sum, h) => sum + (Number(h.hours) || 0), 0);
 
   // Calculate averages (round UP for efficiency, 2 decimals for pace)
-  const avgEfficiency = totalHours > 0 ? Math.ceil(totalViews / totalHours) : 0;
-  const avgPace = totalHours > 0 ? Math.round((totalArticles / totalHours) * 100) / 100 : 0;
+  const avgEfficiency = totalHours > 0 ? Math.ceil(Number(total_views) / totalHours) : 0;
+  const avgPace = totalHours > 0 ? Math.round((Number(total_articles) / totalHours) * 100) / 100 : 0;
 
   // Get top articles
   const topArticles = await getTopArticles(filters, topArticlesLimit);
 
   return {
-    total_views: totalViews,
-    total_articles: totalArticles,
+    total_views: Number(total_views),
+    total_articles: Number(total_articles),
     total_hours: Math.round(totalHours * 100) / 100,
     avg_efficiency: avgEfficiency,
     avg_pace: avgPace,
