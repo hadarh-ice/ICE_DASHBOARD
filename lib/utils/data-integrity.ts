@@ -8,7 +8,8 @@
  * These utilities prevent regression.
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 export interface DataIntegrityReport {
   isValid: boolean;
@@ -36,16 +37,16 @@ export interface DataIntegrityReport {
  * 3. No is_low_views flag inconsistencies
  */
 export async function validateDataIntegrity(
-  supabase: ReturnType<typeof createClient>
+  supabase: SupabaseClient<any>
 ): Promise<DataIntegrityReport> {
   const issues: DataIntegrityReport['issues'] = [];
 
   // Check 1: Get RPC total (server-side aggregation)
   const { data: rpcData, error: rpcError } = await supabase.rpc('get_global_metrics', {
-    p_start_date: null as string | null,
-    p_end_date: null as string | null,
-    p_employee_ids: null as string[] | null,
-  });
+    p_start_date: null,
+    p_end_date: null,
+    p_employee_ids: null,
+  } as any);
 
   if (rpcError) {
     issues.push({
@@ -150,7 +151,7 @@ export async function validateDataIntegrity(
  * Returns true if data is valid, logs errors if not
  */
 export async function quickValidate(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient<any>,
   context: string = 'Data validation'
 ): Promise<boolean> {
   console.log(`\n🔍 ${context}...`);
@@ -193,7 +194,7 @@ export async function quickValidate(
  * Ensures filtered totals also match expected sums
  */
 export async function validateFilteredMetrics(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient<any>,
   filters: {
     startDate?: string;
     endDate?: string;
@@ -204,7 +205,7 @@ export async function validateFilteredMetrics(
     p_start_date: filters.startDate || null,
     p_end_date: filters.endDate || null,
     p_employee_ids: filters.employeeIds && filters.employeeIds.length > 0 ? filters.employeeIds : null,
-  });
+  } as any);
 
   if (error) {
     console.error(`❌ RPC error with filters:`, error.message);
