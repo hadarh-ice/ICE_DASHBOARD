@@ -318,6 +318,94 @@ async function main() {
     console.log(`\n⚠️  Completed with ${totalErrors} errors.`);
   }
 
+  // ==========================================
+  // DATA INTEGRITY VALIDATION
+  // ==========================================
+  console.log('\n\n' + '='.repeat(60));
+  console.log('🔍 DATA INTEGRITY VALIDATION');
+  console.log('='.repeat(60));
+  console.log('\nVerifying Total Views KPI accuracy...\n');
+
+  try {
+    // Check 1: RPC total
+    const { data: rpcData, error: rpcError } = await supabase.rpc('get_global_metrics', {
+      p_start_date: null,
+      p_end_date: null,
+      p_employee_ids: null,
+    });
+
+    if (rpcError) {
+      console.error('❌ RPC validation failed:', rpcError.message);
+      throw rpcError;
+    }
+
+    const rpcTotalViews = rpcData[0].total_views;
+    const rpcTotalArticles = rpcData[0].total_articles;
+
+    // Check 2: Manual sum per employee
+    const { data: articles, error: articlesError } = await supabase
+      .from('articles')
+      .select('employee_id, views')
+      .eq('is_low_views', false);
+
+    if (articlesError) {
+      console.error('❌ Articles fetch failed:', articlesError.message);
+      throw articlesError;
+    }
+
+    const employeeSums = new Map();
+    let orphanedViews = 0;
+    let orphanedCount = 0;
+
+    articles.forEach(article => {
+      if (article.employee_id === null) {
+        orphanedViews += article.views || 0;
+        orphanedCount++;
+      } else {
+        const current = employeeSums.get(article.employee_id) || 0;
+        employeeSums.set(article.employee_id, current + (article.views || 0));
+      }
+    });
+
+    const sumOfEmployeeTotals = Array.from(employeeSums.values()).reduce((sum, val) => sum + val, 0);
+    const totalIncludingOrphaned = sumOfEmployeeTotals + orphanedViews;
+
+    // Check 3: Verify match
+    const totalsMatch = rpcTotalViews === totalIncludingOrphaned;
+
+    console.log('\n📈 Validation Results:\n');
+    console.log(`   RPC Total Views:          ${rpcTotalViews.toLocaleString()}`);
+    console.log(`   RPC Total Articles:       ${rpcTotalArticles.toLocaleString()}`);
+    console.log(`   Sum of Employee Totals:   ${sumOfEmployeeTotals.toLocaleString()}`);
+    console.log(`   Orphaned Articles:        ${orphanedCount}`);
+    console.log(`   Orphaned Views:           ${orphanedViews.toLocaleString()}`);
+    console.log(`   Total (incl. orphaned):   ${totalIncludingOrphaned.toLocaleString()}`);
+    console.log(`   Employees with Articles:  ${employeeSums.size}`);
+
+    if (totalsMatch) {
+      console.log('\n✅ DATA INTEGRITY VERIFIED - Totals match perfectly!');
+    } else {
+      console.error('\n❌ DATA INTEGRITY ERROR - Totals DO NOT match!');
+      console.error(`   Discrepancy: ${Math.abs(rpcTotalViews - totalIncludingOrphaned).toLocaleString()} views`);
+      console.error('\n   This indicates a critical bug in aggregation logic.');
+      console.error('   Dashboard KPIs will show incorrect numbers.');
+      process.exit(1);
+    }
+
+    if (orphanedCount > 0) {
+      console.log(`\n⚠️  WARNING: ${orphanedCount} articles have NULL employee_id`);
+      console.log(`   These represent ${orphanedViews.toLocaleString()} views`);
+      console.log('   Impact: Included in global totals but NOT in employee rankings');
+      console.log('   Cause: Name matching failure during upload');
+    }
+
+  } catch (error) {
+    console.error('\n❌ Validation failed:', error.message);
+    console.error('   Unable to verify data integrity.');
+    console.error('   Manually check dashboard KPIs against database totals.');
+  }
+
+  console.log('\n' + '='.repeat(60));
   console.log('\n📌 Next: Use Playwright to validate KPIs in dashboard\n');
 }
 
