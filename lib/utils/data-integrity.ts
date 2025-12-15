@@ -42,9 +42,9 @@ export async function validateDataIntegrity(
 
   // Check 1: Get RPC total (server-side aggregation)
   const { data: rpcData, error: rpcError } = await supabase.rpc('get_global_metrics', {
-    p_start_date: null,
-    p_end_date: null,
-    p_employee_ids: null,
+    p_start_date: null as string | null,
+    p_end_date: null as string | null,
+    p_employee_ids: null as string[] | null,
   });
 
   if (rpcError) {

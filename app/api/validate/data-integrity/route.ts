@@ -49,9 +49,9 @@ export async function GET() {
 
     // Test 2: Get total using RPC function (the correct method)
     const { data: rpcData, error: rpcError } = await supabase.rpc('get_global_metrics', {
-      p_start_date: null,
-      p_end_date: null,
-      p_employee_ids: null,
+      p_start_date: null as string | null,
+      p_end_date: null as string | null,
+      p_employee_ids: null as string[] | null,
     });
 
     if (rpcError) throw rpcError;
