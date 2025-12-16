@@ -82,17 +82,17 @@ export function KPICard({
           'cursor-pointer'
         )}
       >
-        <div className="p-4">
-          <div className="flex items-start justify-between gap-3">
+        <div className="p-3 md:p-4">
+          <div className="flex items-start justify-between gap-2 md:gap-3">
             {/* Icon */}
             <div
               className={cn(
                 'flex items-center justify-center',
-                'w-11 h-11 rounded-full shrink-0',
+                'w-9 h-9 md:w-11 md:h-11 rounded-full shrink-0',
                 colors.iconBg
               )}
             >
-              <Icon className={cn('h-5 w-5', colors.icon)} />
+              <Icon className={cn('h-4 w-4 md:h-5 md:w-5', colors.icon)} />
             </div>
 
             {/* Content */}
@@ -105,11 +105,11 @@ export function KPICard({
                   <div className="h-7 w-20 bg-gray-200/50 rounded-lg animate-pulse" />
                 ) : (
                   <>
-                    <span className="text-[22px] font-bold text-gray-900 dark:text-white tracking-tight">
+                    <span className="text-[17px] md:text-[22px] font-bold text-gray-900 dark:text-white tracking-tight">
                       {displayValue}
                     </span>
                     {suffix && value !== null && (
-                      <span className="text-[11px] font-medium text-gray-400">
+                      <span className="text-[10px] md:text-[11px] font-medium text-gray-400">
                         {suffix}
                       </span>
                     )}

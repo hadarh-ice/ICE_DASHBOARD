@@ -14,7 +14,7 @@ interface KPIGridProps {
 export function KPIGrid({ metrics, isLoading }: KPIGridProps) {
   if (isLoading) {
     return (
-      <div className="grid gap-3 grid-cols-2">
+      <div className="grid gap-2.5 md:gap-3 grid-cols-2">
         {[1, 2, 3, 4].map((i) => (
           <div
             key={i}
@@ -61,7 +61,7 @@ export function KPIGrid({ metrics, isLoading }: KPIGridProps) {
       variants={kpiContainerVariants}
       initial="hidden"
       animate="visible"
-      className="grid gap-3 grid-cols-2"
+      className="grid gap-2.5 md:gap-3 grid-cols-2"
     >
       {kpiData.map((kpi) => (
         <motion.div key={kpi.title} variants={kpiCardVariants}>

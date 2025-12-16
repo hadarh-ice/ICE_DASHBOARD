@@ -76,7 +76,7 @@ export function EmployeeSelectModal({
       isOpen={isOpen}
       onClose={handleCancel}
       title="בחר עובדים"
-      height="half"
+      height="full"
     >
       <div className="flex flex-col h-full">
         {/* Search Input */}
